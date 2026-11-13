@@ -1,61 +1,70 @@
-# tam
+<p align="center">
+  <img src="docs/images/tam.svg" alt="tam: a sidebar lists tmux sessions with Claude, Codex and Gemini agents and their status, next to a Claude Code pane" width="860">
+</p>
 
-Run coding agents (Claude Code, Codex, Gemini, …) in tmux, and get every session back after a reboot.
+<h1 align="center">tam</h1>
 
-tam is glue. It combines tools you may already use, so that restarting your machine no longer means finding and reopening each agent conversation by hand. Run `tam`, press Enter in each agent pane, and you are back where you were.
+<p align="center">
+  <b>Run your coding agents in tmux. Reboot. Get every session back.</b><br>
+  Claude Code · Codex · Gemini · Qwen · OpenCode · Crush · Copilot · Cursor · goose · Aider · Amp
+</p>
+
+---
+
+You have five agents working in five repos. Then the machine restarts, and you spend ten minutes finding each conversation again.
+
+With tam, you run `tam`, press Enter in each agent pane, and every agent continues the same conversation, in the same directory, in the same split. Until then, a sidebar shows which agents are working and which are waiting for you.
+
+tam is glue: it wires together tmux, fzf and your agents' own resume commands, and adds only what they lack.
 
 ## Install
 
 ```sh
-uv tool install git+https://github.com/kschulst/tam
+brew install kschulst/tap/tam
 tam setup
 ```
 
-`tam setup` offers to install missing tools with Homebrew, adds one line to `~/.tmux.conf`, adds tam's hooks to `~/.claude/settings.json`, and picks a default agent.
+`tam setup` adds one line to `~/.tmux.conf`, adds tam's hooks to Claude Code, and picks a default agent from the ones you have installed.
 
 ## Use
 
+```sh
+cd ~/code/my-project
+tam
+```
+
 | Keys | Does |
 |---|---|
-| `tam` | Restore after a reboot and attach. In a project directory, go to that project's session. |
-| `⌥ a` or `Ctrl+b → a` | New agent in a new window. Pick the directory; `Tab` picks another agent. |
+| `⌥ a` | New agent in a new window. Pick the directory; `Tab` picks another agent. |
+| `⌥ s` | Sidebar: sessions and agents, `working` or `waiting`. Enter jumps there. |
+| `⌥ h` | Cheat sheet |
 | `Ctrl+b → A` | New agent in a split |
-| `⌥ s` or `Ctrl+b → s` | Sidebar: sessions and agents with status (`working`, `waiting`). Enter switches, the footer button closes. |
 | `Ctrl+b → .` | Move the window to another session |
-| `⌥ h` or `Ctrl+b → h` | Cheat sheet |
-| `tam adopt` | Move a Claude session running outside tmux into tam. Inside that session: `! tam adopt`. |
-| `tam agent codex` | Change the default agent |
 
-The `⌥` keys need Option to send Meta (iTerm2: Profiles → Keys → Left Option key: Esc+).
+Every key also works as `Ctrl+b` followed by the letter. The `⌥` keys need Option to send Meta (iTerm2: Profiles → Keys → Left Option key: Esc+).
+
+Already have Claude running in a plain terminal? Type `! tam adopt` in it, and it moves into tam.
+
+## After a reboot
+
+<p align="center">
+  <img src="docs/images/after-reboot.svg" alt="After a reboot, tam restores the windows and each agent pane waits for Enter to resume its conversation" width="860">
+</p>
+
+Run `tam`. Sessions, windows, splits and directories come back. Agent panes wait for Enter, so twenty agents do not all start at once.
 
 ## Built on
 
-| Tool | What it is | What tam uses it for |
-|---|---|---|
-| [tmux](https://github.com/tmux/tmux) | Terminal multiplexer: sessions, windows and panes that keep running when you detach. | Runs every agent. Its hooks tell tam when to save the layout. |
-| [fzf](https://github.com/junegunn/fzf) | Fuzzy finder for lists in the terminal. | The directory picker, the sidebar, `tam move` and `tam adopt`. |
-| [zoxide](https://github.com/ajeetdsouza/zoxide) | Remembers the directories you use most. Optional. | Adds those directories to the picker. |
-| Agent CLIs | Claude Code, Codex, Gemini CLI, Qwen Code, OpenCode, Crush, Copilot CLI, Cursor, goose, Aider, Amp. | Each has its own way to resume a session; tam calls it. [Agents →](docs/agents.md) |
-| Claude Code hooks | Commands Claude Code runs on events such as session start. | Report the session id and status of each pane, so tam resumes the right conversation. |
+| | |
+|---|---|
+| [tmux](https://github.com/tmux/tmux) | Keeps terminals running in sessions and windows. tam saves its layout whenever it changes. |
+| [fzf](https://github.com/junegunn/fzf) | Fuzzy finder. Powers the directory picker, the sidebar and `tam move`. |
+| [zoxide](https://github.com/ajeetdsouza/zoxide) | Optional. Adds the directories you use most to the picker. |
+| Your agents | tam calls each agent's own resume command. Claude Code's hooks report the exact session and its status. |
 
-## How it works
+## More
 
-```mermaid
-flowchart LR
-    A["⌥ a"] --> P["tmux pane<br/>tam run → agent"]
-    P -- "hook: session id" --> O["pane options"]
-    T["tmux hooks"] --> S["tam snapshot<br/>~/.local/state/tam/state.json"]
-    O --> S
-    S -- "reboot, then tam" --> R["sessions, windows,<br/>splits restored"]
-    R -- "Enter" --> X["agent resumes<br/>the same session"]
-```
+- [Agents](docs/agents.md): the built-in agents, changing the default, adding your own
+- [How it works](docs/how-it-works.md): what tam saves, how restore works, the hooks it installs
 
-tam saves the tmux layout and each pane's agent and session id whenever tmux changes. After a reboot, `tam` rebuilds the sessions; agent panes wait for Enter, so twenty restored agents do not all start at once. [Details →](docs/how-it-works.md)
-
-## Develop
-
-```sh
-uv run pytest
-```
-
-The tests run against an isolated tmux server.
+Without Homebrew: `uv tool install git+https://github.com/kschulst/tam`, then `tam setup`.

@@ -1,5 +1,15 @@
 # How it works
 
+```mermaid
+flowchart LR
+    A["⌥ a"] --> P["tmux pane<br/>tam run → agent"]
+    P -- "hook: session id" --> O["pane options"]
+    T["tmux hooks"] --> S["tam snapshot<br/>~/.local/state/tam/state.json"]
+    O --> S
+    S -- "reboot, then tam" --> R["sessions, windows,<br/>splits restored"]
+    R -- "Enter" --> X["agent resumes<br/>the same session"]
+```
+
 ## Saving
 
 `tam setup` adds `run-shell "tam tmux-init"` to `~/.tmux.conf`. `tam tmux-init` registers tmux hooks (new window, split, close, rename, layout change, switching, moving windows between sessions). Each runs `tam snapshot`, which writes the whole tmux server to `~/.local/state/tam/state.json`: sessions, windows with their layouts, and for each pane its directory and agent. The previous version is kept as `state.prev.json`.
