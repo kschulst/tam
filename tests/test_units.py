@@ -226,3 +226,44 @@ def test_tmux_default_binding_is_replaced(env):  # noqa: F811
     assert "choose-tree" in tmux("list-keys", "-T", "prefix", "s")
     subprocess.run([TAM, "tmux-init"], check=True)
     assert "tam: sessions" in tmux("list-keys", "-N", "-T", "prefix", "s")
+
+
+def test_option_shortcuts_in_root_table(env):  # noqa: F811
+    tmux("new-session", "-d", "-s", "o")
+    tmux("bind-key", "-n", "M-a", "display-message", "mine")
+    subprocess.run([TAM, "tmux-init"], check=True)
+    assert "tam: sessions" in tmux("list-keys", "-N", "-T", "root", "M-s")
+    assert "display-message mine" in tmux("list-keys", "-T", "root", "M-a")
+    sheet = subprocess.run(
+        [TAM, "help", "--print"],
+        capture_output=True,
+        text=True,
+        check=True,
+        env={k: v for k, v in os.environ.items() if k != "TMUX"},
+    ).stdout
+    assert "⌥ s · Ctrl+b → s" in sheet
+    assert "⌥ a" not in sheet  # the user's own M-a binding is kept
+
+
+def test_sidebar_close_needs_two_clicks(env, monkeypatch):  # noqa: F811
+    from tam import sidebar
+
+    tmux("new-session", "-d", "-s", "s1")
+    tmux("new-window", "-t", "s1:", "-n", "victim")
+    tmux("new-session", "-d", "-s", "s2")
+    monkeypatch.setattr(sidebar, "_current", lambda client: ("s1", "0"))
+    target = "=s1:1"
+
+    assert "victim" in sidebar.footer(target)
+    assert sidebar.click("c", target, "tam").startswith("change-footer(")
+    assert "victim" in tmux("list-windows", "-t", "s1", "-F", "#{window_name}")
+    # Focusing another line disarms the button.
+    sidebar.footer("=s2:")
+    assert sidebar.click("c", target, "tam").startswith("change-footer(")
+    assert sidebar.click("c", target, "tam").startswith("reload(")
+    assert "victim" not in tmux("list-windows", "-t", "s1", "-F", "#{window_name}")
+
+    assert "session s2 (1 window)" in sidebar.footer("=s2:")
+    sidebar.click("c", "=s2:", "tam")
+    sidebar.click("c", "=s2:", "tam")
+    assert tmux("list-sessions", "-F", "#{session_name}").split() == ["s1"]

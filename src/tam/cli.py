@@ -21,7 +21,12 @@ def _attach(session: str, then: list[str]) -> int:
     hook = "client-attached[43]"
     command = " ".join(shlex.quote(part) for part in then)
     tmux("set-hook", "-g", hook, f"set-hook -gu {hook} ; {command}")
-    os.execvp("tmux", ["tmux", "attach-session", "-t", f"={session}"])
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        print(f"tam: tmux is running with session '{session}'. Run tam in a terminal to attach.")
+        return 0
+    from tam.tmux import clean_env
+
+    os.execvpe("tmux", ["tmux", "attach-session", "-t", f"={session}"], clean_env())
 
 
 def _cheatsheet_popup() -> list[str]:
@@ -34,8 +39,17 @@ def _cheatsheet_popup() -> list[str]:
 
 def cmd_default(a: argparse.Namespace) -> int:
     from tam import state
+    from tam.new import project_root, session_name
+    from tam.tmux import global_option, server_running, session_names, tmux
 
-    session = state.ensure_tmux(paths.tam_executable(), os.getcwd())
+    cwd = os.getcwd()
+    adopted = server_running() and global_option(state.ATTACH_TO)
+    session = state.ensure_tmux(paths.tam_executable(), cwd)
+    # In a project directory, go to that project's session. In ~, the last one.
+    if not adopted and os.path.realpath(cwd) != os.path.realpath(os.path.expanduser("~")):
+        session = session_name(cwd)
+        if session not in session_names():
+            tmux("new-session", "-d", "-s", session, "-c", project_root(cwd))
     if a.no_attach:
         return 0
     return _attach(session, _cheatsheet_popup())
@@ -134,7 +148,16 @@ def cmd_sidebar(a: argparse.Namespace) -> int:
     from tam import sidebar
     from tam.tmux import tmux
 
+    if a.footer:
+        print(sidebar.footer(a.footer))
+        return 0
     client = a.client or tmux("display-message", "-p", "#{client_name}").strip()
+    if a.click:
+        print(sidebar.click(client, a.click, paths.tam_executable()))
+        return 0
+    if a.list:
+        print("\n".join(sidebar.list_lines(client)[0]))
+        return 0
     return sidebar.pick(client) if a.pick else sidebar.popup(client)
 
 
@@ -191,6 +214,9 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("sidebar", help="list sessions and agents, switch with Enter")
     s.add_argument("--client", help=argparse.SUPPRESS)
     s.add_argument("--pick", action="store_true", help=argparse.SUPPRESS)
+    s.add_argument("--list", action="store_true", help=argparse.SUPPRESS)
+    s.add_argument("--footer", help=argparse.SUPPRESS)
+    s.add_argument("--click", help=argparse.SUPPRESS)
     s.set_defaults(func=cmd_sidebar)
 
     s = sub.add_parser("setup", help="install the tmux config line and the Claude hook")

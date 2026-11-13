@@ -103,7 +103,7 @@ En `cd` i et shell lagres ved neste tmux-hendelse. Skjer det en reboot før nest
 1. Starter tmux-serveren hvis den ikke kjører.
 2. Hvis `@tam_restored` ikke er satt: for hver sesjon i `state.json` som ikke finnes, lages sesjonen, vinduene og panene. Deretter kjøres `select-layout <window_layout>`, og pane-options settes. Sesjoner som allerede finnes, røres ikke. Til slutt settes `@tam_restored 1`.
 3. Shell-panes starter et shell i lagret mappe. Agentpanes kjører `tam run --wait` med de lagrede verdiene.
-4. Attacher til sist aktive sesjon.
+4. Attacher til sesjonen for prosjektet i gjeldende mappe (git-roten, ellers mappen), og lager den om den mangler. Fra `~` attacher `tam` til sist aktive sesjon. Har `! tam adopt` satt `@tam_attach_to`, brukes den sesjonen.
 
 Finnes ikke mappen lenger, starter panen i `$HOME` med en advarsel.
 
@@ -150,6 +150,8 @@ Status-hookene er rene shell-kommandoer (`tmux set -p -t "$TMUX_PANE" @tam_statu
 
 `tam sidebar` åpner en `fzf`-popup i full høyde langs venstre kant. Den viser sesjoner og vinduer, og agentvinduer har status. Et vindu med flere agentpanes viser den mest presserende statusen (`waiting` før `working`). Enter kjører `switch-client` til valgt sesjon eller vindu. Markøren starter på gjeldende vindu.
 
+Bunnfeltet i sidebaren er en lukkeknapp for linjen som er markert: `[ ✕ close <vindu> ]` eller `[ ✕ close session <navn> (N windows) ]`. Første klikk (eller `Ctrl+x`) endrer teksten til `click again to close ...`, og andre klikk lukker med `kill-window` eller `kill-session`. Hvis du flytter til en annen linje, nullstilles knappen. Den aktiverte linjen lagres i `~/.local/state/tam/sidebar-armed`, fordi hver `fzf`-handling kjører i en ny prosess. Lukkes sesjonen klienten står i, flyttes klienten først til en annen sesjon, ellers ville tmux koblet den fra. `fzf` oppgir bare kolonnen for klikk i topp- og bunnfeltet, og derfor er det én knapp nederst og ikke et kryss på hver linje.
+
 ### `tam adopt`
 
 1. Viser en `fzf`-liste. Øverst står Claude-prosesser som kjører utenfor `tam`, med mappe, tty, navn og første melding. Under står nylig avsluttede samtaler fra `~/.claude/projects`.
@@ -181,12 +183,12 @@ Taster:
 
 | Tast | Funksjon |
 |---|---|
-| `prefix + a` | Velg mappe i en `fzf`-popup, og start Claude der i et nytt vindu |
+| `prefix + a`, `⌥ a` | Velg mappe i en `fzf`-popup, og start Claude der i et nytt vindu |
 | `prefix + A` | `tam new claude --split h` |
 | `prefix + h` | Jukselappen i en popup (`tam help`) |
-| `prefix + s` | Sidebar: sesjoner og vinduer med agentstatus (`tam sidebar`). Erstatter tmux sin standard `choose-tree -Zs`. |
+| `prefix + s`, `⌥ s` | Sidebar: sesjoner og vinduer med agentstatus (`tam sidebar`). Erstatter tmux sin standard `choose-tree -Zs`. |
 
-Tastene får en beskrivelse (`-N "tam: ..."`), så de vises i `prefix + ?`. En tast med tmux sin standardbinding (`s`) erstattes. En tast brukeren selv har bundet til noe annet (f.eks. `h` for vim-navigasjon), overskrives ikke. Jukselappen viser da kommandoen i stedet for tasten.
+`⌥ a` og `⌥ s` ligger i root-tabellen (uten prefix) og virker når terminalen sender Option som Meta (iTerm2: Left Option key = Esc+). Tastene får en beskrivelse (`-N "tam: ..."`), så de vises i `prefix + ?`. En tast med tmux sin standardbinding (`s`) erstattes. En tast brukeren selv har bundet til noe annet (f.eks. `h` for vim-navigasjon), overskrives ikke. Jukselappen viser da kommandoen i stedet for tasten.
 
 Hver gang `tam` attacher, vises jukselappen som popup. Den lukkes med en vilkårlig tast. Utenfor tmux gjøres det med en engangs-hook på `client-attached`, siden klienten ikke finnes før `tam` har gjort `exec tmux attach`. Popupen tilpasses klientens størrelse (`tam help --client`), fordi tmux uten feilmelding avviser en popup som er større enn terminalen.
 

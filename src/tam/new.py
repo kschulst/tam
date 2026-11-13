@@ -9,12 +9,21 @@ from tam import harness as harness_mod
 from tam.tmux import query, server_running, session_names, tmux
 
 
-def project_name(cwd: str) -> str:
+def project_root(cwd: str) -> str:
+    """The git repository root containing cwd, or cwd itself."""
     proc = subprocess.run(
         ["git", "-C", cwd, "rev-parse", "--show-toplevel"], capture_output=True, text=True
     )
-    root = proc.stdout.strip() if proc.returncode == 0 else cwd
-    return os.path.basename(root.rstrip("/")) or "root"
+    return proc.stdout.strip() if proc.returncode == 0 else cwd
+
+
+def project_name(cwd: str) -> str:
+    return os.path.basename(project_root(cwd).rstrip("/")) or "root"
+
+
+def session_name(cwd: str) -> str:
+    """tmux session name for the project at cwd. tmux does not allow '.' or ':'."""
+    return project_name(cwd).replace(".", "_").replace(":", "_")
 
 
 def _unique_name(session: str, project: str, base: str) -> str:
@@ -64,7 +73,7 @@ def new(
         session = tmux("display-message", "-p", "-t", target, "#{session_name}").strip()
     else:
         # Outside tmux: use a session named after the project, then attach.
-        session = project
+        session = session_name(cwd)
         attach_after = attach
         if not server_running() or session not in session_names():
             tmux("new-session", "-d", "-s", session, "-c", cwd)
@@ -95,5 +104,7 @@ def new(
         )
 
     if attach_after:
-        os.execvp("tmux", ["tmux", "attach-session", "-t", f"={session}"])
+        from tam.tmux import clean_env
+
+        os.execvpe("tmux", ["tmux", "attach-session", "-t", f"={session}"], clean_env())
     return session

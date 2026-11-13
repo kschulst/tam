@@ -50,6 +50,37 @@ def ask(message: str) -> bool:
             return False
 
 
+def ensure_cwd(name: str) -> bool:
+    """Make sure the agent starts in a directory that exists.
+
+    A renamed directory keeps working as the process cwd, but $PWD still names
+    the old path, and agents such as Claude refuse to start then. A deleted
+    directory cannot be used at all, so the user picks another one.
+    """
+    try:
+        cwd = os.getcwd()
+    except (FileNotFoundError, OSError):
+        cwd = ""
+    if cwd and os.path.isdir(cwd):
+        os.environ["PWD"] = cwd
+        return True
+    os.chdir(os.path.expanduser("~"))
+    return _pick_dir(name, os.environ.get("PWD", ""))
+
+
+def _pick_dir(name: str, gone: str) -> bool:
+    """Let the user pick a directory instead of `gone`. False if they close the pane."""
+    from tam.dirs import pick
+
+    if not ask(f"{name}: directory {gone} no longer exists. Pick another one?"):
+        return False
+    chosen = pick(os.getcwd())
+    if chosen:
+        os.chdir(chosen)
+    os.environ["PWD"] = os.getcwd()
+    return True
+
+
 def _spawn(argv: list[str]) -> int:
     try:
         return subprocess.call(argv)
@@ -89,8 +120,9 @@ def run(
     signal.signal(signal.SIGINT, lambda *_: None)
     signal.signal(signal.SIGTERM, lambda *_: None)
 
-    if missing_cwd:
-        print(f"tam: directory {missing_cwd} no longer exists, using {os.getcwd()}")
+    # Restore started this pane in $HOME because the saved directory is gone.
+    if missing_cwd and not _pick_dir(name, missing_cwd):
+        return 0
 
     harnesses = harness_mod.load()
     h = harnesses.get(harness_name)
@@ -105,6 +137,9 @@ def run(
 
     fresh = False
     while True:
+        # Before the command is built: templates may use $PWD.
+        if not ensure_cwd(name):
+            return 0
         sid = "" if fresh else pane_option(pane, "@tam_session_id")
         was_started = not fresh and pane_option(pane, "@tam_started") == "1"
         argv, resuming = h.command(name=name, session_id=sid, started=was_started, args=args)

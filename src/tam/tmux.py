@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 
 SEP = "\x1f"
@@ -11,8 +12,21 @@ class TmuxError(RuntimeError):
     pass
 
 
+def clean_env() -> dict[str, str]:
+    """Environment for tmux without Claude Code's session variables.
+
+    A tmux server started from inside Claude Code (`! tam ...`) would otherwise
+    pass CLAUDECODE and CLAUDE_CODE_SESSION_ID to every agent started in it.
+    """
+    return {
+        k: v
+        for k, v in os.environ.items()
+        if k != "CLAUDECODE" and not k.startswith("CLAUDE_CODE_")
+    }
+
+
 def tmux(*args: str, check: bool = True) -> str:
-    proc = subprocess.run(["tmux", *args], capture_output=True, text=True)
+    proc = subprocess.run(["tmux", *args], capture_output=True, text=True, env=clean_env())
     if check and proc.returncode != 0:
         raise TmuxError(f"tmux {' '.join(args)}: {proc.stderr.strip()}")
     return proc.stdout

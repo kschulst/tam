@@ -226,7 +226,7 @@ def adopt_self(tam_exe: str, claude_pid: int) -> int:
     A detached helper stops Claude after this command has returned its output,
     then opens the tam window. It must not be a child of Claude, which is stopped.
     """
-    from tam.new import project_name
+    from tam.new import session_name
     from tam.tmux import pane_option
 
     pane = os.environ.get("TMUX_PANE")
@@ -234,6 +234,10 @@ def adopt_self(tam_exe: str, claude_pid: int) -> int:
         print("tam: this session is already in tam")
         return 0
     session_id, cwd = _session_of(claude_pid)
+    # Claude Code passes its session id to commands it runs, including `!` commands.
+    # This also covers sessions started before tam's hook was installed.
+    session_id = os.environ.get("CLAUDE_CODE_SESSION_ID") or session_id
+    cwd = _proc_cwd(claude_pid) or cwd
     if not session_id:
         print("tam: could not find this session's id", file=sys.stderr)
         return 1
@@ -248,7 +252,7 @@ def adopt_self(tam_exe: str, claude_pid: int) -> int:
             start_new_session=True,
         )
     print(
-        f"tam: moving this session to tmux session '{project_name(cwd)}'. "
+        f"tam: moving this session to tmux session '{session_name(cwd)}'. "
         "Claude stops in a moment; then run `tam` to continue."
     )
     return 0

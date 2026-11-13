@@ -36,6 +36,10 @@ def env(tmp_path, monkeypatch):
     sock.mkdir()
     for k in ("TMUX", "TMUX_PANE"):
         monkeypatch.delenv(k, raising=False)
+    # Tests may run inside Claude Code; its session must not leak into them.
+    for k in list(os.environ):
+        if k == "CLAUDECODE" or k.startswith("CLAUDE_CODE_"):
+            monkeypatch.delenv(k)
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("TMUX_TMPDIR", str(sock))
     monkeypatch.setenv("XDG_STATE_HOME", str(home / ".local" / "state"))
@@ -44,6 +48,9 @@ def env(tmp_path, monkeypatch):
     for d in ("a", "b", "c"):
         (tmp_path / d).mkdir()
     yield tmp_path
+    # Stop detached `tam adopt` helpers first. Started after the socket directory
+    # is gone, tmux would fall back to the default socket: the user's own server.
+    subprocess.run(["pkill", "-f", f"{TAM} adopt --finish"], capture_output=True)
     subprocess.run(["tmux", "kill-server"], capture_output=True)
     shutil.rmtree(sock, ignore_errors=True)
 
@@ -58,13 +65,13 @@ def tam(*args: str, **env: str) -> subprocess.CompletedProcess:
     )
 
 
-def wait_for(predicate, timeout=5.0):
+def wait_for(predicate, timeout=5.0, show: str | None = None):
     end = time.monotonic() + timeout
     while time.monotonic() < end:
         if predicate():
             return
         time.sleep(0.05)
-    raise AssertionError("timed out")
+    raise AssertionError("timed out" + (f"; pane shows:\n{capture(show)}" if show else ""))
 
 
 def shape(sessions: list[dict]) -> list:
@@ -87,7 +94,7 @@ def load_state(root: Path) -> dict:
 
 
 def capture(target: str) -> str:
-    return tmux("capture-pane", "-p", "-t", target)
+    return tmux("capture-pane", "-p", "-J", "-t", target)
 
 
 def test_reboot_roundtrip(env):
@@ -128,8 +135,8 @@ def test_reboot_roundtrip(env):
     tam("snapshot")
     assert json.loads(state_file(env).read_text())["sessions"] == json.loads(saved)["sessions"]
 
-    # Restore.
-    tam("--no-attach")
+    # Restore, from ~ so no session is added for the current directory.
+    subprocess.run([TAM, "--no-attach"], check=True, cwd=env / "home")
     names = tmux("list-sessions", "-F", "#{session_name}").split()
     assert sorted(names) == ["scratch", "work"]
     panes = tmux("list-panes", "-s", "-t", "=work", "-F", "#{window_name}|#{pane_current_path}")
@@ -292,3 +299,119 @@ def test_adopt_from_inside_claude(env):
     assert tmux("show-options", "-gqv", "@tam_attach_to").strip() == "a"
     # No empty placeholder window next to the adopted one.
     assert tmux("list-windows", "-t", "a", "-F", "#{window_name}").split() == ["a:claude"]
+
+
+def test_agent_survives_renamed_and_deleted_directory(env):
+    """A renamed cwd must not leave a stale $PWD; a deleted one offers the picker."""
+    with open(env / "home" / ".config" / "tam" / "harnesses.toml", "a") as f:
+        f.write(
+            "\n[harness.pwd]\n"
+            'start = "sh -c \'test -d \\"$PWD\\" && echo OK $PWD || echo BADPWD; '
+            "exec sleep 1000'\"\n"
+        )
+    proj = env / "proj"
+    proj.mkdir()
+    tmux("new-session", "-d", "-s", "p", "-c", str(env / "a"))
+    pane = tmux("list-panes", "-t", "p:", "-F", "#{pane_id}").strip()
+    tam("new", "pwd", "-n", "x", "-C", str(proj), "--target", pane)
+    agent = next(
+        ln.split()[0]
+        for ln in tmux("list-panes", "-a", "-F", "#{pane_id} #{window_name}").splitlines()
+        if ln.endswith(":x")
+    )
+    wait_for(lambda: "OK" in capture(agent))
+
+    # Rename the directory while the agent runs, then restart it.
+    proj.rename(env / "renamed")
+    tmux("send-keys", "-t", agent, "C-c")
+    wait_for(lambda: "exited" in capture(agent))
+    tmux("send-keys", "-t", agent, "Enter")
+    wait_for(lambda: f"OK {env / 'renamed'}" in capture(agent), show=agent)
+    assert "BADPWD" not in capture(agent)
+
+    # Delete it: tam run offers the picker instead of failing in a loop.
+    tmux("send-keys", "-t", agent, "C-c")
+    wait_for(lambda: capture(agent).count("exited") >= 2)
+    (env / "renamed").rmdir()
+    tmux("send-keys", "-t", agent, "Enter")
+    wait_for(lambda: "no longer exists" in capture(agent), show=agent)
+    tmux("send-keys", "-t", agent, "Enter")  # yes, pick another one
+    time.sleep(1.0)
+    tmux("send-keys", "-t", agent, "-l", str(env / "c"))
+    time.sleep(0.3)
+    tmux("send-keys", "-t", agent, "Enter")
+    wait_for(lambda: f"OK {env / 'c'}" in capture(agent), show=agent)
+
+
+def test_server_started_from_claude_code_does_not_inherit_its_session(env):
+    subprocess.run(
+        [TAM, "--no-attach"],
+        check=True,
+        cwd=env / "a",
+        env={**os.environ, "CLAUDECODE": "1", "CLAUDE_CODE_SESSION_ID": "outer"},
+    )
+    server_env = tmux("show-environment", "-g")
+    assert "CLAUDECODE" not in server_env
+    assert "CLAUDE_CODE_SESSION_ID" not in server_env
+
+
+def test_attach_without_terminal_explains(env):
+    proc = subprocess.run(
+        [TAM], cwd=env / "a", capture_output=True, text=True, stdin=subprocess.DEVNULL
+    )
+    assert proc.returncode == 0
+    assert "Run tam in a terminal" in proc.stdout
+
+
+def test_tam_in_project_dir_goes_to_its_session(env):
+    tmux("new-session", "-d", "-s", "other", "-c", str(env / "b"))
+    tam("tmux-init")
+    proj = env / "my.proj"
+    proj.mkdir()
+    (proj / "sub").mkdir()
+    subprocess.run(["git", "init", "-q", str(proj)], check=True)
+
+    # From a subdirectory of a git repo: a session for the repo, started at its root.
+    subprocess.run([TAM, "--no-attach"], check=True, cwd=proj / "sub")
+    names = tmux("list-sessions", "-F", "#{session_name}").split()
+    assert sorted(names) == ["my_proj", "other"]
+    assert tmux("display-message", "-p", "-t", "my_proj:", "#{pane_current_path}").strip() == str(
+        proj
+    )
+
+    # Again: no duplicate. From ~: no new session.
+    subprocess.run([TAM, "--no-attach"], check=True, cwd=proj)
+    subprocess.run([TAM, "--no-attach"], check=True, cwd=env / "home")
+    assert sorted(tmux("list-sessions", "-F", "#{session_name}").split()) == ["my_proj", "other"]
+
+
+def test_adopt_from_inside_claude_uses_claude_code_session_env(env):
+    """Without a hook record, `! tam adopt` uses CLAUDE_CODE_SESSION_ID from Claude Code."""
+    with open(env / "home" / ".config" / "tam" / "harnesses.toml", "a") as f:
+        f.write(
+            "\n[harness.claude]\n"
+            "start = \"sh -c 'echo STARTED; exec sleep 1000'\"\n"
+            "resume = \"sh -c 'echo RESUMED {id}; exec sleep 1000'\"\n"
+        )
+    bin_dir = env / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "claude").symlink_to("/bin/sh")
+    fake = subprocess.Popen(
+        [str(bin_dir / "claude"), "-c", f"{TAM} adopt; exec sleep 1000"],
+        stdout=subprocess.PIPE,
+        text=True,
+        cwd=env / "b",
+        env={**os.environ, "CLAUDE_CODE_SESSION_ID": "sid-env"},
+    )
+    assert "moving this session" in fake.stdout.readline()
+    fake.wait(timeout=15)
+
+    def adopted():
+        out = subprocess.run(
+            ["tmux", "list-panes", "-a", "-F", "#{@tam_session_id} #{pane_current_path}"],
+            capture_output=True,
+            text=True,
+        ).stdout
+        return f"sid-env {env / 'b'}" in out
+
+    wait_for(adopted, 10)

@@ -47,9 +47,19 @@ def _key(prefix: str, key: str) -> str:
     return f"{prefix} → {key}"
 
 
+def _keys(prefix: str, key: str) -> str:
+    """Prefix key plus the Option shortcut when tam owns it: "⌥ a · Ctrl+b → a"."""
+    from tam.setup import tam_key
+
+    with_prefix = _key(prefix, key)
+    if server_running() and tam_key(f"M-{key}", "root"):
+        return f"⌥ {key} · {with_prefix}" if with_prefix else f"⌥ {key}"
+    return with_prefix
+
+
 def text(closing_hint: bool = False) -> str:
     p = _prefix()
-    new_window = _key(p, "a") or "tam new"
+    new_window = _keys(p, "a") or "tam new"
     new_split = _key(p, "A") or "tam new --split h"
     sheet = _key(p, "h") or "tam help"
     rows = [
@@ -63,7 +73,7 @@ def text(closing_hint: bool = False) -> str:
         ("Enter", "resume the conversation"),
         ("q", "close the pane"),
         ("tmux", None),
-        (_key(p, "s") or "tam sidebar", "sessions and agents, switch with Enter"),
+        (_keys(p, "s") or "tam sidebar", "sessions and agents, switch with Enter"),
         (f"{p} → w", "tmux tree of sessions and windows"),
         (f"{p} → n / p", "next / previous window"),
         (f"{p} → arrow", "move between panes"),

@@ -139,7 +139,7 @@ ATTACH_TO = "@tam_attach_to"
 
 def ensure_tmux(tam_exe: str, cwd: str) -> str:
     """Start or restore the tmux server as needed. Returns the session to attach to."""
-    from tam.new import project_name
+    from tam.new import session_name
     from tam.tmux import global_option
 
     names = session_names()
@@ -151,7 +151,7 @@ def ensure_tmux(tam_exe: str, cwd: str) -> str:
             return preferred
         last = (load() or {}).get("last_session")
         return last if last in names else min(names)
-    return restore(tam_exe, project_name(cwd), cwd)
+    return restore(tam_exe, session_name(cwd), cwd)
 
 
 def restore(tam_exe: str, fallback_session: str, cwd: str) -> str:

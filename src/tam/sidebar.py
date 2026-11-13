@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 
 from tam import paths
-from tam.tmux import client_size, open_popup, query, tmux
+from tam.tmux import client_size, open_popup, query, session_names, tmux
 
 WIDTH = 44
 
@@ -64,11 +65,75 @@ def lines(rows: list[dict[str, str]], current: tuple[str, str]) -> tuple[list[st
     return out, selected
 
 
-def pick(client: str) -> int:
-    rows = query(["list-panes", "-a"], FIELDS)
+def _current(client: str) -> tuple[str, str]:
     cur = tmux("display-message", "-p", "-c", client, "#{session_name}\t#{window_index}")
     session, index = cur.strip().split("\t")
-    items, selected = lines(rows, (session, index))
+    return session, index
+
+
+def list_lines(client: str) -> tuple[list[str], int]:
+    return lines(query(["list-panes", "-a"], FIELDS), _current(client))
+
+
+# Closing from the sidebar: the footer is a button that closes the focused line.
+# The first click (or Ctrl+x) arms it, the second closes. Moving to another line
+# disarms it. The armed target is kept in a file because each fzf action runs a
+# new process.
+
+
+def _armed_file() -> Path:
+    return paths.state_dir() / "sidebar-armed"
+
+
+def _describe(target: str) -> str:
+    if target.endswith(":"):
+        session = target[1:-1]
+        n = len(tmux("list-windows", "-t", target[:-1], "-F", "x", check=False).split())
+        return f"session {session} ({n} window{'s' if n != 1 else ''})"
+    return tmux("display-message", "-p", "-t", target, "#{window_name}", check=False).strip()
+
+
+def footer(target: str) -> str:
+    """Footer text for the focused line. Also disarms the button."""
+    _armed_file().unlink(missing_ok=True)
+    return f"[ ✕ close {_describe(target)} ]  (or Ctrl+x)"
+
+
+def click(client: str, target: str, exe: str) -> str:
+    """fzf actions for a click on the close button."""
+    armed = _armed_file()
+    if not armed.exists() or armed.read_text() != target:
+        armed.parent.mkdir(parents=True, exist_ok=True)
+        armed.write_text(target)
+        return f"change-footer([ ✕ click again to close {_describe(target)} ])"
+    armed.unlink()
+    close(client, target)
+    return f"reload({exe} sidebar --list --client {client})"
+
+
+def close(client: str, target: str) -> None:
+    from tam import state
+
+    session = target[1:].split(":", 1)[0]
+    if target.endswith(":"):
+        if _current(client)[0] == session:
+            # tmux detaches a client whose session is destroyed; move it first.
+            others = sorted(n for n in session_names() if n != session)
+            if others:
+                tmux("switch-client", "-c", client, "-t", f"={others[0]}:", check=False)
+        tmux("kill-session", "-t", f"={session}", check=False)
+    else:
+        tmux("kill-window", "-t", target, check=False)
+    state.snapshot()
+
+
+def pick(client: str) -> int:
+    import shlex
+
+    items, selected = list_lines(client)
+    exe = shlex.quote(paths.tam_executable())
+    c = shlex.quote(client)
+    close_action = f"transform({exe} sidebar --click {{1}} --client {c})"
     proc = subprocess.run(
         [
             "fzf",
@@ -84,13 +149,22 @@ def pick(client: str) -> int:
             "--info",
             "hidden",
             "--no-separator",
+            "--footer",
+            " ",
             "--bind",
-            f"load:pos({selected + 1})",
+            f"load:pos({selected + 1})+unbind(load)",
+            "--bind",
+            f"focus:transform-footer({exe} sidebar --footer {{1}})",
+            "--bind",
+            f"click-footer:{close_action}",
+            "--bind",
+            f"ctrl-x:{close_action}",
         ],
         input="\n".join(items),
         stdout=subprocess.PIPE,
         text=True,
     )
+    _armed_file().unlink(missing_ok=True)
     if proc.returncode != 0 or not proc.stdout.strip():
         return 0
     target = proc.stdout.split("\t", 1)[0]

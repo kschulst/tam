@@ -51,31 +51,32 @@ MIN_TMUX = (3, 3)
 
 
 def key_bindings(exe: str) -> list[list[str]]:
-    """[key, note, *tmux command] for each prefix binding tam adds."""
+    """[table, key, note, *tmux command] for each binding tam adds.
+
+    Root-table Option keys (M-a, M-s) work without the prefix when the terminal
+    sends Option as Meta (iTerm2: Profiles > Keys > Left Option key: Esc+).
+    """
     here = ["run-shell", "-c", "#{pane_current_path}"]
+    new_window = [
+        "run-shell",
+        "-b",
+        f"{exe} new claude --popup-client '#{{client_name}}' --target '#{{pane_id}}'"
+        " --dir #{q:pane_current_path}",
+    ]
+    sidebar = ["run-shell", "-b", f"{exe} sidebar --client '#{{client_name}}'"]
     return [
+        ["prefix", "a", "tam: new Claude in a new window (pick directory)", *new_window],
+        ["root", "M-a", "tam: new Claude in a new window (pick directory)", *new_window],
         [
-            "a",
-            "tam: new Claude in a new window (pick directory)",
-            "run-shell",
-            "-b",
-            f"{exe} new claude --popup-client '#{{client_name}}' --target '#{{pane_id}}'"
-            " --dir #{q:pane_current_path}",
-        ],
-        [
+            "prefix",
             "A",
             "tam: new Claude in a split",
             *here,
             f"{exe} new claude --split h --target '#{{pane_id}}'",
         ],
-        ["h", "tam: cheat sheet", *popup_command(exe)],
-        [
-            "s",
-            "tam: sessions and agents",
-            "run-shell",
-            "-b",
-            f"{exe} sidebar --client '#{{client_name}}'",
-        ],
+        ["prefix", "h", "tam: cheat sheet", *popup_command(exe)],
+        ["prefix", "s", "tam: sessions and agents", *sidebar],
+        ["root", "M-s", "tam: sessions and agents", *sidebar],
     ]
 
 
@@ -88,30 +89,30 @@ def popup_command(exe: str) -> list[str]:
 TMUX_DEFAULT_BINDINGS = {"s": "choose-tree -Zs"}
 
 
-def tam_key(key: str) -> bool | None:
-    """True if tam owns the prefix key, False if the user bound it, None if free.
+def tam_key(key: str, table: str = "prefix") -> bool | None:
+    """True if tam owns the key, False if the user bound it, None if free.
 
     A key with tmux's default binding counts as free.
     """
-    if "tam:" in tmux("list-keys", "-N", "-T", "prefix", key, check=False):
+    if "tam:" in tmux("list-keys", "-N", "-T", table, key, check=False):
         return True
-    bound = tmux("list-keys", "-T", "prefix", key, check=False).strip()
-    m = re.search(r"-T prefix\s+\S+\s+(.*)$", bound)
+    bound = tmux("list-keys", "-T", table, key, check=False).strip()
+    m = re.search(rf"-T {table}\s+\S+\s+(.*)$", bound)
     command = m.group(1).strip() if m else bound
-    if not command or command == TMUX_DEFAULT_BINDINGS.get(key):
+    if not command or (table == "prefix" and command == TMUX_DEFAULT_BINDINGS.get(key)):
         return None
     # Bindings from tam versions that did not set a note.
     return "tam" in command and any(c in command for c in (" new claude", " help --"))
 
 
-def _bind(key: str, note: str, command: list[str]) -> None:
-    """Bind a prefix key unless the user already bound it to something else.
+def _bind(table: str, key: str, note: str, command: list[str]) -> None:
+    """Bind a key unless the user already bound it to something else.
 
     tam's line in tmux.conf runs after the user's own bindings.
     """
-    if tam_key(key) is False:
+    if tam_key(key, table) is False:
         return
-    tmux("bind-key", "-N", note, key, *command)
+    tmux("bind-key", "-N", note, "-T", table, key, *command)
 
 
 def tmux_init() -> int:
@@ -131,8 +132,8 @@ def tmux_init() -> int:
         delay = f"sleep {CLOSE_DELAY}; " if hook in CLOSE_HOOKS else ""
         tmux("set-hook", "-g", f"{hook}[{HOOK_INDEX}]", f"run-shell -b '{delay}{exe} snapshot'")
 
-    for key, note, *command in key_bindings(exe):
-        _bind(key, note, command)
+    for table, key, note, *command in key_bindings(exe):
+        _bind(table, key, note, command)
 
     # Without saved state there is nothing to restore, so saving can start now.
     if not paths.state_file().exists():
