@@ -7,6 +7,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from tam import paths
@@ -49,8 +50,60 @@ CLAUDE_SETTINGS = [
 MIN_TMUX = (3, 3)
 
 
+def key_bindings(exe: str) -> list[list[str]]:
+    """[key, note, *tmux command] for each prefix binding tam adds."""
+    here = ["run-shell", "-c", "#{pane_current_path}"]
+    return [
+        [
+            "a",
+            "tam: new Claude in a new window (pick directory)",
+            "run-shell",
+            "-b",
+            f"{exe} new claude --popup-client '#{{client_name}}' --target '#{{pane_id}}'"
+            " --dir #{q:pane_current_path}",
+        ],
+        [
+            "A",
+            "tam: new Claude in a split",
+            *here,
+            f"{exe} new claude --split h --target '#{{pane_id}}'",
+        ],
+        ["h", "tam: cheat sheet", *popup_command(exe)],
+    ]
+
+
+def popup_command(exe: str) -> list[str]:
+    """tmux command that opens the cheat sheet popup, sized for the client."""
+    return ["run-shell", "-b", f"{exe} help --client '#{{client_name}}'"]
+
+
+def tam_key(key: str) -> bool | None:
+    """True if tam owns the prefix key, False if the user bound it, None if unbound."""
+    out = tmux("list-keys", "-N", "-T", "prefix", key, check=False).strip()
+    if out:
+        return "tam:" in out
+    bound = tmux("list-keys", "-T", "prefix", key, check=False).strip()
+    if not bound:
+        return None
+    # Bindings from tam versions that did not set a note.
+    return "tam" in bound and any(c in bound for c in (" new claude", " help --"))
+
+
+def _bind(key: str, note: str, command: list[str]) -> None:
+    """Bind a prefix key unless the user already bound it to something else.
+
+    tam's line in tmux.conf runs after the user's own bindings.
+    """
+    if tam_key(key) is False:
+        return
+    tmux("bind-key", "-N", note, key, *command)
+
+
 def tmux_init() -> int:
     """Apply tam's hooks, bindings and settings to the running tmux server."""
+    if not server_running():
+        print("tam: no tmux server running; tmux.conf applies this on the next start")
+        return 0
     exe = shlex.quote(paths.tam_executable())
 
     for option, value in CLAUDE_SETTINGS:
@@ -63,22 +116,8 @@ def tmux_init() -> int:
         delay = f"sleep {CLOSE_DELAY}; " if hook in CLOSE_HOOKS else ""
         tmux("set-hook", "-g", f"{hook}[{HOOK_INDEX}]", f"run-shell -b '{delay}{exe} snapshot'")
 
-    tmux(
-        "bind-key",
-        "a",
-        "run-shell",
-        "-c",
-        "#{pane_current_path}",
-        f"{exe} new claude --target '#{{pane_id}}'",
-    )
-    tmux(
-        "bind-key",
-        "A",
-        "run-shell",
-        "-c",
-        "#{pane_current_path}",
-        f"{exe} new claude --split h --target '#{{pane_id}}'",
-    )
+    for key, note, *command in key_bindings(exe):
+        _bind(key, note, command)
 
     # Without saved state there is nothing to restore, so saving can start now.
     if not paths.state_file().exists():
@@ -117,24 +156,63 @@ def install_claude_hook(settings_path: Path) -> bool:
     return True
 
 
+# Tools tam cannot work without. The full list, with optional tools, is the Brewfile.
+REQUIRED_TOOLS = {"tmux", "fzf"}
+_BREW_LINE = re.compile(r'^brew\s+"([^"]+)"\s*(?:#\s*(.*))?$')
+
+
+def brewfile() -> Path:
+    from importlib import resources
+
+    return Path(str(resources.files("tam").joinpath("Brewfile")))
+
+
+def brewfile_tools(path: Path) -> list[tuple[str, str]]:
+    """(formula, description) for each `brew` line."""
+    tools = []
+    for line in path.read_text().splitlines():
+        m = _BREW_LINE.match(line.strip())
+        if m:
+            tools.append((m.group(1), m.group(2) or ""))
+    return tools
+
+
+def check_tools(install: bool | None = None) -> bool:
+    """Print tool status and offer `brew bundle` for what is missing.
+
+    Returns False if a required tool is still missing.
+    """
+    path = brewfile()
+    tools = brewfile_tools(path)
+    missing = [name for name, _ in tools if not shutil.which(name)]
+    for name, purpose in tools:
+        mark = "✓" if shutil.which(name) else ("✗" if name in REQUIRED_TOOLS else "·")
+        print(f"{mark} {name:<8} {purpose}")
+    cmd = ["brew", "bundle", "install", "--no-upgrade", f"--file={path}"]
+    if missing and shutil.which("brew"):
+        if install is None:
+            install = sys.stdin.isatty() and input(
+                f"Install {', '.join(missing)} with brew bundle? [Y/n] "
+            ).strip().lower() in ("", "y", "yes")
+        if install:
+            subprocess.run(cmd, check=False)
+        else:
+            print(f"  Install later with: {' '.join(cmd)}")
+    elif missing:
+        print("  Homebrew not found: install the tools above with your package manager.")
+    return all(shutil.which(name) for name in REQUIRED_TOOLS)
+
+
 def setup() -> int:
-    ok = True
+    ok = check_tools()
     version = _tmux_version()
     if version is None:
-        print("✗ tmux not found. Install it with: brew install tmux")
         return 1
     if version < MIN_TMUX:
         print(
             f"✗ tmux {version[0]}.{version[1]} is too old, tam needs {MIN_TMUX[0]}.{MIN_TMUX[1]}+"
         )
         ok = False
-    else:
-        print(f"✓ tmux {version[0]}.{version[1]}")
-
-    if shutil.which("fzf"):
-        print("✓ fzf")
-    else:
-        print("✗ fzf not found (needed by tam adopt). Install it with: brew install fzf")
 
     conf = _tmux_conf()
     text = conf.read_text() if conf.exists() else ""

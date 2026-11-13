@@ -135,8 +135,12 @@ def load(path: Path | None = None) -> dict | None:
 # Restoring
 
 
-def restore(tam_exe: str) -> str | None:
-    """Create every saved session that does not exist. Returns the session to attach to."""
+def restore(tam_exe: str, fallback_session: str, cwd: str) -> str:
+    """Create every saved session that does not exist. Returns the session to attach to.
+
+    With nothing saved and no server running, a session named `fallback_session`
+    is created in `cwd`, so the tmux server exists before saving is enabled.
+    """
     state = load()
     existing = session_names()
     last = None
@@ -146,12 +150,15 @@ def restore(tam_exe: str) -> str | None:
                 continue
             _create_session(s, tam_exe)
         last = state.get("last_session")
+    names = session_names()
+    if not names:
+        tmux("new-session", "-d", "-s", fallback_session, "-c", cwd)
+        names = {fallback_session}
     tmux("set-option", "-g", RESTORED_FLAG, "1")
     snapshot()
-    names = session_names()
     if last in names:
         return last
-    return min(names) if names else None
+    return min(names)
 
 
 _LAYOUT_SIZE = re.compile(r"^[0-9a-f]{4},(\d+)x(\d+)")

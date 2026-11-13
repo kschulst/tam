@@ -1,0 +1,4 @@
+# Tools tam uses. `tam setup` installs missing ones with `brew bundle`.
+brew "tmux"    # runs the sessions
+brew "fzf"     # directory picker and tam adopt
+brew "zoxide"  # more directories in the picker (needs `eval "$(zoxide init zsh)"` in .zshrc)

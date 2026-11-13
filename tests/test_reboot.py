@@ -217,3 +217,17 @@ def test_shutdown_sigterm_to_everything_keeps_agent_panes(env):
     os.kill(server, 15)
     time.sleep(3.0)
     assert shape(load_state(env)["sessions"]) == shape(before)
+
+
+def test_first_run_without_server_or_state(env):
+    subprocess.run([TAM, "--no-attach"], check=True, cwd=env / "a")
+    assert tmux("list-sessions", "-F", "#{session_name}").split() == ["a"]
+    assert tmux("show-options", "-gqv", "@tam_restored").strip() == "1"
+    assert [s["name"] for s in load_state(env)["sessions"]] == ["a"]
+
+
+def test_saved_state_with_no_sessions(env):
+    state_file(env).parent.mkdir(parents=True)
+    state_file(env).write_text(json.dumps({"version": 1, "sessions": []}))
+    subprocess.run([TAM, "--no-attach"], check=True, cwd=env / "b")
+    assert tmux("list-sessions", "-F", "#{session_name}").split() == ["b"]

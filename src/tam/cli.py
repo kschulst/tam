@@ -7,38 +7,74 @@ import sys
 from tam import paths
 
 
-def _attach(session: str | None) -> int:
-    from tam.new import project_name
+def _attach(session: str, then: list[str]) -> int:
+    """Attach (or switch) to session, then run the tmux command `then` for that client."""
+    import shlex
+
     from tam.tmux import tmux
 
-    if session is None:
-        session = project_name(os.getcwd())
-        tmux("new-session", "-d", "-s", session)
     if os.environ.get("TMUX"):
         tmux("switch-client", "-t", f"={session}")
+        tmux(*then, check=False)
         return 0
+    # Outside tmux there is no client yet: run the command once, when it attaches.
+    hook = "client-attached[43]"
+    command = " ".join(shlex.quote(part) for part in then)
+    tmux("set-hook", "-g", hook, f"set-hook -gu {hook} ; {command}")
     os.execvp("tmux", ["tmux", "attach-session", "-t", f"={session}"])
+
+
+def _cheatsheet_popup() -> list[str]:
+    import shlex
+
+    from tam.setup import popup_command
+
+    return popup_command(shlex.quote(paths.tam_executable()))
 
 
 def cmd_default(a: argparse.Namespace) -> int:
     from tam import state
-    from tam.tmux import global_option, server_running, session_names
+    from tam.new import project_name
+    from tam.tmux import global_option, session_names
 
-    if server_running() and global_option(state.RESTORED_FLAG) == "1":
-        names = session_names()
+    names = session_names()
+    if names and global_option(state.RESTORED_FLAG) == "1":
         last = (state.load() or {}).get("last_session")
-        session = last if last in names else (min(names) if names else None)
+        session = last if last in names else min(names)
     else:
-        session = state.restore(paths.tam_executable())
+        cwd = os.getcwd()
+        session = state.restore(paths.tam_executable(), project_name(cwd), cwd)
     if a.no_attach:
         return 0
-    return _attach(session)
+    return _attach(session, _cheatsheet_popup())
 
 
 def cmd_new(a: argparse.Namespace) -> int:
     from tam.new import new
 
+    cwd = os.path.abspath(os.path.expanduser(a.dir)) if a.dir else None
+    if cwd and not os.path.isdir(cwd):
+        print(f"tam: no such directory: {a.dir}", file=sys.stderr)
+        return 1
+    if a.popup_client:
+        # Run the directory picker in a popup; it calls `tam new --pick` with literal values.
+        from tam.tmux import client_size, open_popup
+
+        cols, rows = client_size(a.popup_client)
+        argv = [paths.tam_executable(), "new", a.agent, "--pick", "--dir", cwd or os.getcwd()]
+        if a.target:
+            argv += ["--target", a.target]
+        open_popup(a.popup_client, min(100, cols * 9 // 10), max(12, rows * 6 // 10), argv)
+        return 0
+    if a.pick:
+        from tam.dirs import pick
+
+        cwd = pick(cwd or os.getcwd())
+        if cwd is None:
+            return 0
+
     return new(
+        cwd=cwd,
         tam_exe=paths.tam_executable(),
         harness=a.agent,
         name=a.name,
@@ -86,6 +122,12 @@ def cmd_adopt(_: argparse.Namespace) -> int:
     return adopt(paths.tam_executable())
 
 
+def cmd_help(a: argparse.Namespace) -> int:
+    from tam.cheatsheet import show
+
+    return show(print_only=a.print_only, wait=a.wait, client=a.client)
+
+
 def cmd_setup(_: argparse.Namespace) -> int:
     from tam.setup import setup
 
@@ -120,11 +162,20 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("agent", nargs="?", default="claude")
     s.add_argument("-n", "--name")
     s.add_argument("--split", choices=["h", "v"])
+    s.add_argument("-C", "--dir", help="directory to start in (default: current)")
+    s.add_argument("--pick", action="store_true", help=argparse.SUPPRESS)
+    s.add_argument("--popup-client", help=argparse.SUPPRESS)
     s.add_argument("--target", help=argparse.SUPPRESS)
     s.set_defaults(func=cmd_new)
 
     s = sub.add_parser("adopt", help="move a Claude session from outside tam into tam")
     s.set_defaults(func=cmd_adopt)
+
+    s = sub.add_parser("help", help="show the cheat sheet")
+    s.add_argument("--print", dest="print_only", action="store_true", help=argparse.SUPPRESS)
+    s.add_argument("--wait", action="store_true", help=argparse.SUPPRESS)
+    s.add_argument("--client", help=argparse.SUPPRESS)
+    s.set_defaults(func=cmd_help)
 
     s = sub.add_parser("setup", help="install the tmux config line and the Claude hook")
     s.set_defaults(func=cmd_setup)

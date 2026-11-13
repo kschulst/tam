@@ -28,7 +28,7 @@
 | `~/.local/state/tam/state.json` | Lagret bilde av tmux-serveren. Forrige versjon beholdes som `state.prev.json`. |
 | `~/.local/state/tam/seen/<pid>` | Claude-sesjoner registrert av hooken, brukt av `adopt` |
 
-Avhengigheter: `tmux` 3.3+, `fzf` (bare for `adopt`), `python@3.13`. Ingen tmux-plugins, ingen TPM, ingen tmux-resurrect eller tmux-continuum.
+Avhengigheter: `tmux` 3.3+, `fzf` (mappevelger og `adopt`), `python@3.13`. Valgfritt: `zoxide`, som gir flere mapper i velgeren. Verktøyene står i `src/tam/Brewfile`, som følger med pakken. `tam setup` viser status for hvert verktøy og tilbyr `brew bundle install` for det som mangler. Når `tam` blir en brew-formel, gjør `depends_on` det samme for de påkrevde verktøyene. Ingen tmux-plugins, ingen TPM, ingen tmux-resurrect eller tmux-continuum.
 
 ## Agentdefinisjon
 
@@ -104,6 +104,18 @@ En `cd` i et shell lagres ved neste tmux-hendelse. Skjer det en reboot før nest
 
 Finnes ikke mappen lenger, starter panen i `$HOME` med en advarsel.
 
+### Mappevelger
+
+`prefix + a` kjører `tam new claude --popup-client ... --target ... --dir ...` via `run-shell`, som ekspanderer tmux-formatene. `tam` åpner så en popup med `tam new --pick` og ferdig utfylte verdier, fordi `display-popup` ikke ekspanderer formater i kommandoen. Popupen tilpasses klientens størrelse, fordi tmux uten feilmelding avviser en popup som er større enn klienten.
+
+Listen i velgeren, uten duplikater og bare mapper som finnes:
+1. gjeldende mappe (Enter alene gir samme oppførsel som før velgeren fantes),
+2. mapper Claude har kjørt i, fra `cwd` i det nyeste transkriptet per prosjekt i `~/.claude/projects`, sist brukt først,
+3. mapper fra panene i `state.json`,
+4. `zoxide query -l`, hvis `zoxide` er installert.
+
+Er det du skriver ikke i listen, men er en mappe som finnes, brukes den. `tam new -C <mappe>` gjør det samme fra kommandolinjen.
+
 ### `tam run`
 
 Wrapperen som kjører i alle agentpanes:
@@ -135,6 +147,7 @@ Sesjoner som ble startet før hooken var installert, finnes med `lsof` (mappe) o
 | `tam` | Restore ved behov, deretter attach |
 | `tam new [agent] [-n navn] [--split h\|v] [-- flagg]` | Ny agentpane |
 | `tam adopt` | Meld inn en ekstern eller avsluttet Claude-sesjon |
+| `tam help` | Jukselapp med `tam`- og tmux-versjon: popup inne i tmux, ellers utskrift |
 | `tam setup` | Legg til `source`-linjen i `~/.tmux.conf`, installer Claude-hooken og sjekk avhengigheter |
 | `tam snapshot`, `tam run`, `tam hook`, `tam tmux-init` | Interne kommandoer, kalles av tmux, panes og hooks |
 
@@ -146,8 +159,13 @@ Taster:
 
 | Tast | Funksjon |
 |---|---|
-| `prefix + a` | `tam new claude` i nytt vindu |
+| `prefix + a` | Velg mappe i en `fzf`-popup, og start Claude der i et nytt vindu |
 | `prefix + A` | `tam new claude --split h` |
+| `prefix + h` | Jukselappen i en popup (`tam help`) |
+
+Tastene får en beskrivelse (`-N "tam: ..."`), så de vises i `prefix + ?`. En tast brukeren allerede har bundet til noe annet (f.eks. `h` for vim-navigasjon), overskrives ikke. Jukselappen viser da kommandoen i stedet for tasten.
+
+Hver gang `tam` attacher, vises jukselappen som popup. Den lukkes med en vilkårlig tast. Utenfor tmux gjøres det med en engangs-hook på `client-attached`, siden klienten ikke finnes før `tam` har gjort `exec tmux attach`. Popupen tilpasses klientens størrelse (`tam help --client`), fordi tmux uten feilmelding avviser en popup som er større enn terminalen.
 
 `prefix + f` er fjernet. Den skulle åpne `choose-tree -Zw`, og det gjør tmux sin standardbinding `prefix + w` allerede.
 

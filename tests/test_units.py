@@ -100,3 +100,82 @@ def test_hook_without_tmux_exits_zero():
         env={k: v for k, v in os.environ.items() if k != "TMUX_PANE"},
     )
     assert proc.returncode == 0
+
+
+def test_user_bindings_are_kept_and_cheatsheet_follows(env):  # noqa: F811
+    tmux("new-session", "-d", "-s", "b")
+    tmux("bind-key", "h", "select-pane", "-L")
+    subprocess.run([TAM, "tmux-init"], check=True)
+    assert "select-pane -L" in tmux("list-keys", "-T", "prefix", "h")
+    assert "tam: new Claude" in tmux("list-keys", "-N", "-T", "prefix", "a")
+
+    sheet = subprocess.run(
+        [TAM, "help", "--print"],
+        capture_output=True,
+        text=True,
+        check=True,
+        env={k: v for k, v in os.environ.items() if k != "TMUX"},
+    ).stdout
+    assert "Ctrl+b → a" in sheet
+    assert "Open this sheet again: tam help" in sheet
+
+    # Running tmux-init again keeps tam's own bindings.
+    subprocess.run([TAM, "tmux-init"], check=True)
+    assert "tam: new Claude" in tmux("list-keys", "-N", "-T", "prefix", "a")
+
+
+def test_humanize_prefix():
+    from tam.cheatsheet import humanize
+
+    assert humanize("C-b") == "Ctrl+b"
+    assert humanize("C-a") == "Ctrl+a"
+    assert humanize("M-Space") == "Alt+Space"
+    assert humanize("C-M-x") == "Ctrl+Alt+x"
+    assert humanize("`") == "`"
+
+
+def test_dir_candidates_order_and_resolve(tmp_path, monkeypatch):
+    from tam import dirs
+
+    claude = tmp_path / "claude"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setattr(dirs, "_zoxide_dirs", lambda: [])
+    old, recent, here = (tmp_path / n for n in ("old", "recent", "here"))
+    for d in (old, recent, here):
+        d.mkdir()
+    for name, cwd, mtime in (
+        ("p1", old, 1000),
+        ("p2", recent, 2000),
+        ("p3", tmp_path / "gone", 3000),
+    ):
+        f = claude / "projects" / name / "s.jsonl"
+        f.parent.mkdir(parents=True)
+        f.write_text(json.dumps({"type": "user", "cwd": str(cwd), "message": {"content": "x"}}))
+        os.utime(f, (mtime, mtime))
+
+    # Current first, then by last use; directories that no longer exist are left out.
+    assert dirs.candidates(str(here)) == [str(here), str(recent), str(old)]
+
+    assert dirs.resolve("", str(recent)) == str(recent)
+    assert dirs.resolve(str(old), "") == str(old)
+    assert dirs.resolve(str(tmp_path / "nope"), "") is None
+
+
+def test_new_with_dir(env):  # noqa: F811
+    tmux("new-session", "-d", "-s", "d", "-c", str(env / "a"))
+    pane = tmux("list-panes", "-t", "=d:", "-F", "#{pane_id}").strip()
+    subprocess.run(
+        [TAM, "new", "fake", "-n", "x", "-C", str(env / "c"), "--target", pane], check=True
+    )
+    wait_for(lambda: str(env / "c") in tmux("list-panes", "-a", "-F", "#{pane_current_path}"))
+    bad = subprocess.run([TAM, "new", "fake", "-C", str(env / "nope"), "--target", pane])
+    assert bad.returncode == 1
+
+
+def test_brewfile_lists_required_tools():
+    from tam.setup import REQUIRED_TOOLS, brewfile, brewfile_tools
+
+    names = [name for name, _ in brewfile_tools(brewfile())]
+    assert REQUIRED_TOOLS <= set(names)
+    assert all(desc for _, desc in brewfile_tools(brewfile()))

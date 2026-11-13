@@ -52,3 +52,31 @@ def set_pane_option(pane: str, name: str, value: str) -> None:
 
 def unset_pane_option(pane: str, name: str) -> None:
     tmux("set-option", "-pu", "-t", pane, name, check=False)
+
+
+def client_size(client: str) -> tuple[int, int]:
+    out = tmux("display-message", "-p", "-c", client, "#{client_width} #{client_height}")
+    cols, rows = (int(v) for v in out.split())
+    return cols, rows
+
+
+def open_popup(client: str, width: int, height: int, argv: list[str]) -> None:
+    """Open a popup running argv on client, clamped to the client's size.
+
+    tmux refuses a popup larger than the client without showing an error, and
+    does not expand formats in the popup command, so callers pass literal values.
+    """
+    import shlex
+
+    cols, rows = client_size(client)
+    tmux(
+        "display-popup",
+        "-c",
+        client,
+        "-E",
+        "-w",
+        str(min(width, cols)),
+        "-h",
+        str(min(height, rows)),
+        " ".join(shlex.quote(a) for a in argv),
+    )
