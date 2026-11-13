@@ -77,8 +77,12 @@ def _last_tag() -> str | None:
 
 
 def _subjects(since: str | None) -> list[str]:
+    """Commit subjects since the last tag, for commits that change what tam installs.
+
+    Docs, tests, the justfile and this script are not part of a release.
+    """
     rng = [f"{since}..HEAD"] if since else ["HEAD"]
-    out = _run("git", "log", "--format=%s", *rng)
+    out = _run("git", "log", "--format=%s", *rng, "--", "src/tam")
     return [line for line in out.splitlines() if line]
 
 
@@ -114,7 +118,8 @@ def _update_tap(version: str, sha256: str) -> None:
         target.write_text(text[text.index("class Tam") :])
         _run("git", "add", "Formula/tam.rb", cwd=clone)
         _run("git", "commit", "--quiet", "-m", f"tam {version}", cwd=clone)
-        _run("git", "push", "--quiet", "origin", "HEAD:main", cwd=clone)
+        # The clone is on the tap's default branch, which is what brew reads.
+        _run("git", "push", "--quiet", "origin", "HEAD", cwd=clone)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -134,7 +139,7 @@ def main(argv: list[str] | None = None) -> int:
     tag = f"v{version}"
     body = notes(subjects)
 
-    print(f"{last or 'no release yet'} → {tag} ({len(subjects)} commits since)\n")
+    print(f"{last or 'no release yet'} → {tag} ({len(subjects)} commits to src/tam since)\n")
     print(body)
     if args.dry_run:
         return 0
