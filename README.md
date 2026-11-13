@@ -15,7 +15,7 @@ You have five agents working in five repos. Then the machine restarts, and you s
 
 With tam, you run `tam`, press Enter in each agent pane, and every agent continues the same conversation, in the same directory, in the same split. Until then, a sidebar shows which agents are working and which are waiting for you.
 
-tam is glue: it wires together tmux, fzf and your agents' own resume commands, and adds only what they lack.
+tam is glue: it wires together tmux, fzf and your agents' own resume commands, and adds only what they lack. ([Why not tmux-resurrect?](docs/how-it-works.md#why-not-tmux-resurrect))
 
 ## Install
 
@@ -57,7 +57,7 @@ Run `tam`. Sessions, windows, splits and directories come back. Agent panes wait
 
 | | |
 |---|---|
-| [tmux](https://github.com/tmux/tmux) | Keeps terminals running in sessions and windows. tam saves its layout whenever it changes. |
+| [tmux](https://github.com/tmux/tmux) | Keeps terminals running in sessions and windows, but only until the machine restarts. tam writes the layout and each pane's agent to disk, so `tam` can rebuild it. |
 | [fzf](https://github.com/junegunn/fzf) | Fuzzy finder. Powers the directory picker, the sidebar and `tam move`. |
 | [zoxide](https://github.com/ajeetdsouza/zoxide) | Optional. Adds the directories you use most to the picker. |
 | Your agents | tam calls each agent's own resume command. Claude Code's hooks report the exact session and its status. |

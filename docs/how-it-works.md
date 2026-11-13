@@ -10,6 +10,17 @@ flowchart LR
     R -- "Enter" --> X["agent resumes<br/>the same session"]
 ```
 
+## Why not tmux-resurrect
+
+tmux keeps sessions, windows and running programs in the memory of its server process. It writes nothing to disk, so a reboot ends all of it. [tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect) and [tmux-continuum](https://github.com/tmux-plugins/tmux-continuum) fill that gap for layouts, and for the layout alone they would be enough. For agents they are not:
+
+- **The conversation.** resurrect restarts a program with the command line it was started with. A pane started with `claude` gets `claude` again: an empty conversation. The session id is not on the command line, and it changes during a session (`/clear`, `/resume`). tam gets the id from the agent's hook and stores it on the pane.
+- **Timing.** continuum saves every 15 minutes, so a window opened since the last save is lost. tam saves on every change.
+- **Start-up.** resurrect starts every saved program at once. tam's agent panes wait for Enter.
+- **Shutdown.** Panes that close before tmux exits could be saved as removed. tam ignores those closes (see [Shutdown](#shutdown)).
+
+Saving and restoring the layout is about 250 lines in tam ([state.py](../src/tam/state.py)). The agent part is what no existing tool covers.
+
 ## Saving
 
 `tam setup` adds `run-shell "tam tmux-init"` to `~/.tmux.conf`. `tam tmux-init` registers tmux hooks (new window, split, close, rename, layout change, switching, moving windows between sessions). Each runs `tam snapshot`, which writes the whole tmux server to `~/.local/state/tam/state.json`: sessions, windows with their layouts, and for each pane its directory and agent. The previous version is kept as `state.prev.json`.
