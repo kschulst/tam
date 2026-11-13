@@ -46,5 +46,7 @@ def tam_version() -> str:
 
     try:
         return version("tam")
-    except PackageNotFoundError:
-        return "dev"
+    except PackageNotFoundError:  # installed without packaging metadata, e.g. Homebrew
+        from tam import __version__
+
+        return __version__

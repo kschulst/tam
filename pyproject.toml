@@ -1,6 +1,6 @@
 [project]
 name = "tam"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Start agent sessions in tmux and get them back after a reboot"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -9,6 +9,9 @@ dependencies = []
 
 [project.scripts]
 tam = "tam.cli:main"
+
+[tool.hatch.version]
+path = "src/tam/__init__.py"
 
 [build-system]
 requires = ["hatchling"]
