@@ -163,9 +163,16 @@ def test_agent_exit_prompts_and_resumes(env):
         if ln.endswith(":x")
     )
     wait_for(lambda: "STARTED x" in capture(agent))
+
+    def status():
+        return tmux("show-options", "-pqv", "-t", agent, "@tam_status").strip()
+
+    assert status() == "running"
     tam("hook", "session", "abc", TMUX_PANE=agent)
+    assert status() == "waiting"
     tmux("send-keys", "-t", agent, "C-c")
     wait_for(lambda: "exited" in capture(agent))
+    assert status() == "exited"
     tmux("send-keys", "-t", agent, "Enter")
     wait_for(lambda: "RESUMED abc" in capture(agent))
 
@@ -231,3 +238,57 @@ def test_saved_state_with_no_sessions(env):
     state_file(env).write_text(json.dumps({"version": 1, "sessions": []}))
     subprocess.run([TAM, "--no-attach"], check=True, cwd=env / "b")
     assert tmux("list-sessions", "-F", "#{session_name}").split() == ["b"]
+
+
+def test_adopt_from_inside_claude(env):
+    """`! tam adopt` in a Claude session outside tmux moves that session into tam."""
+    home = env / "home"
+    with open(home / ".config" / "tam" / "harnesses.toml", "a") as f:
+        f.write(
+            "\n[harness.claude]\n"
+            "start = \"sh -c 'echo STARTED; exec sleep 1000'\"\n"
+            "resume = \"sh -c 'echo RESUMED {id}; exec sleep 1000'\"\n"
+        )
+    bin_dir = env / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "claude").symlink_to("/bin/sh")
+    seen = home / ".local" / "state" / "tam" / "seen"
+    seen.mkdir(parents=True)
+    # The fake claude records itself as the hook would, then runs `tam adopt` like `!` does.
+    script = (
+        f'echo \'{{"pid": \'$$\', "tty": "", "cwd": "{env / "a"}", '
+        f'"session_id": "sid-adopt"}}\' > {seen}/$$; '
+        f"{TAM} adopt; exec sleep 1000"
+    )
+    fake = subprocess.Popen(
+        [str(bin_dir / "claude"), "-c", script],
+        stdout=subprocess.PIPE,
+        text=True,
+        cwd=env / "a",
+    )
+    first_line = fake.stdout.readline()
+    assert "moving this session" in first_line
+
+    # The helper stops the fake claude and opens a tam window resuming the session.
+    fake.wait(timeout=15)
+    log = home / ".local" / "state" / "tam" / "adopt.log"
+
+    def adopted():
+        out = subprocess.run(
+            ["tmux", "list-panes", "-a", "-F", "#{@tam_session_id}"], capture_output=True, text=True
+        ).stdout
+        return "sid-adopt" in out
+
+    try:
+        wait_for(adopted, 10)
+    except AssertionError:
+        raise AssertionError(log.read_text() if log.exists() else "no adopt.log") from None
+    pane = next(
+        ln.split()[0]
+        for ln in tmux("list-panes", "-a", "-F", "#{pane_id} #{@tam_session_id}").splitlines()
+        if ln.endswith("sid-adopt")
+    )
+    wait_for(lambda: "RESUMED sid-adopt" in capture(pane))
+    assert tmux("show-options", "-gqv", "@tam_attach_to").strip() == "a"
+    # No empty placeholder window next to the adopted one.
+    assert tmux("list-windows", "-t", "a", "-F", "#{window_name}").split() == ["a:claude"]

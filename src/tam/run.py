@@ -98,8 +98,10 @@ def run(
         ask(f"tam: unknown agent '{harness_name}'. Add it to harnesses.toml.")
         return 1
 
-    if wait and not ask(f"{name}: resume {harness_name}?"):
-        return 0
+    if wait:
+        set_pane_option(pane, "@tam_status", "stopped")
+        if not ask(f"{name}: resume {harness_name}?"):
+            return 0
 
     fresh = False
     while True:
@@ -113,7 +115,9 @@ def run(
         t0 = time.monotonic()
         set_pane_option(pane, "@tam_started", "1")
         state.snapshot()
+        set_pane_option(pane, "@tam_status", "running")
         rc = _spawn(argv)
+        set_pane_option(pane, "@tam_status", "exited")
         if resuming and rc != 0 and time.monotonic() - t0 < RESUME_FAIL_SECONDS:
             if not ask(f"{name}: resume failed (exit {rc}). Start a new session?"):
                 return 0

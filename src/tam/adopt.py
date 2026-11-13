@@ -176,6 +176,12 @@ def _stop(pid: int) -> bool:
 
 
 def adopt(tam_exe: str) -> int:
+    from tam.hook import find_ancestor
+
+    claude_pid = find_ancestor("claude")
+    if claude_pid:
+        return adopt_self(tam_exe, claude_pid)
+
     items = candidates()
     if not items:
         print("tam: no Claude sessions to adopt")
@@ -191,7 +197,7 @@ def adopt(tam_exe: str) -> int:
             print(f"tam: pid {c.pid} did not exit", file=sys.stderr)
             return 1
     cwd = c.cwd if os.path.isdir(c.cwd) else str(Path.home())
-    return new(
+    new(
         tam_exe=tam_exe,
         harness="claude",
         name=None,
@@ -200,3 +206,89 @@ def adopt(tam_exe: str) -> int:
         cwd=cwd,
         session_id=c.session_id,
     )
+    return 0
+
+
+def _session_of(pid: int) -> tuple[str, str]:
+    """(session id, cwd) of a running Claude process."""
+    seen_file = paths.seen_dir() / str(pid)
+    if seen_file.exists():
+        info = json.loads(seen_file.read_text())
+        return info["session_id"], info["cwd"]
+    cwd = _proc_cwd(pid) or os.getcwd()
+    t = _newest_transcript(cwd)
+    return (t.stem if t else ""), cwd
+
+
+def adopt_self(tam_exe: str, claude_pid: int) -> int:
+    """`! tam adopt` inside a Claude session: move that session into tam.
+
+    A detached helper stops Claude after this command has returned its output,
+    then opens the tam window. It must not be a child of Claude, which is stopped.
+    """
+    from tam.new import project_name
+    from tam.tmux import pane_option
+
+    pane = os.environ.get("TMUX_PANE")
+    if pane and pane_option(pane, "@tam_harness"):
+        print("tam: this session is already in tam")
+        return 0
+    session_id, cwd = _session_of(claude_pid)
+    if not session_id:
+        print("tam: could not find this session's id", file=sys.stderr)
+        return 1
+    log = paths.state_dir() / "adopt.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    with open(log, "a") as out:
+        subprocess.Popen(
+            [tam_exe, "adopt", "--finish", str(claude_pid), session_id, cwd],
+            stdin=subprocess.DEVNULL,
+            stdout=out,
+            stderr=out,
+            start_new_session=True,
+        )
+    print(
+        f"tam: moving this session to tmux session '{project_name(cwd)}'. "
+        "Claude stops in a moment; then run `tam` to continue."
+    )
+    return 0
+
+
+def finish(tam_exe: str, claude_pid: int, session_id: str, cwd: str) -> int:
+    """Second half of adopt_self, run detached from Claude."""
+    from tam import state
+    from tam.tmux import tmux
+
+    time.sleep(1.0)  # let Claude show the command output first
+    if _alive(claude_pid) and not _stop(claude_pid):
+        print(f"tam adopt: pid {claude_pid} did not exit", file=sys.stderr)
+        return 1
+    if not os.path.isdir(cwd):
+        cwd = str(Path.home())
+    os.environ.pop("TMUX", None)
+    os.environ.pop("TMUX_PANE", None)
+    from tam.tmux import query, server_running
+
+    was_running = server_running()
+    state.ensure_tmux(tam_exe, cwd)
+    # Without a server and saved state, ensure_tmux creates an empty shell session
+    # as a placeholder. It is removed once the agent window exists.
+    placeholder = None
+    if not was_running:
+        windows = query(["list-windows", "-a"], ["window_id", "session_windows"])
+        if len(windows) == 1:
+            placeholder = windows[0]["window_id"]
+    session = new(
+        tam_exe=tam_exe,
+        harness="claude",
+        name=None,
+        split=None,
+        args=[],
+        cwd=cwd,
+        session_id=session_id,
+        attach=False,
+    )
+    if placeholder:
+        tmux("kill-window", "-t", placeholder, check=False)
+    tmux("set-option", "-g", state.ATTACH_TO, session)
+    return 0

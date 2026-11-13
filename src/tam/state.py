@@ -134,6 +134,25 @@ def load(path: Path | None = None) -> dict | None:
 
 # Restoring
 
+ATTACH_TO = "@tam_attach_to"
+
+
+def ensure_tmux(tam_exe: str, cwd: str) -> str:
+    """Start or restore the tmux server as needed. Returns the session to attach to."""
+    from tam.new import project_name
+    from tam.tmux import global_option
+
+    names = session_names()
+    if names and global_option(RESTORED_FLAG) == "1":
+        preferred = global_option(ATTACH_TO)
+        if preferred:
+            tmux("set-option", "-gu", ATTACH_TO)
+        if preferred in names:
+            return preferred
+        last = (load() or {}).get("last_session")
+        return last if last in names else min(names)
+    return restore(tam_exe, project_name(cwd), cwd)
+
 
 def restore(tam_exe: str, fallback_session: str, cwd: str) -> str:
     """Create every saved session that does not exist. Returns the session to attach to.

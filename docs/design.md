@@ -2,6 +2,10 @@
 
 `tam` (tmux-agent-man) gjør det enkelt å starte agentsesjoner (Claude, Codex m.fl.) i tmux, og å få tilbake hele tmux-oppsettet, inkludert agentsamtalene, etter en reboot.
 
+## Hva tam er
+
+`tam` er lim mellom etablerte verktøy. Det kombinerer tmux, fzf, zoxide og agentenes egne hooks og resume-funksjoner slik at agentsesjoner er enkle å starte, holde oversikt over og hente tilbake etter en reboot. `tam` lager bare det verktøyene ikke dekker selv: koblingen mellom en tmux-pane og agentens sesjons-ID, lagring og gjenoppretting av tmux-oppsettet, og noen få popups som binder det sammen. README-en skal presentere `tam` på denne måten, og forklare hvert verktøy med 1–2 linjer.
+
 ## Mål
 
 - Etter en reboot gjenoppretter `tam` alle tmux-sesjoner, vinduer og panes med layout og mappe. Agentpanes gjenopptar samme samtale.
@@ -14,7 +18,6 @@
 - Git worktrees. Agentens egne flagg sendes gjennom med `--`.
 - Gjenoppretting av programmer i shell-panes (`vim` o.l.) og av scrollback.
 - `adopt` for andre agenter enn Claude.
-- Synkronisering av tilstand mellom maskiner.
 - Automatisk restore ved innlogging eller når iTerm åpnes.
 
 ## Komponenter
@@ -131,12 +134,30 @@ Wrapperen som kjører i alle agentpanes:
 - Skriver `seen/<claude-pid>` med pid, tty, mappe og sesjons-ID. Dette gjøres for alle Claude-sesjoner.
 - Hvis `$TMUX_PANE` er satt og panen har `@tam_harness`, settes `@tam_session_id` på panen. Det holder koblingen riktig etter `/clear` og `/resume`.
 
+### Agentstatus og sidebar
+
+Pane-optionen `@tam_status` har en av disse verdiene:
+
+| Status | Satt av |
+|---|---|
+| `running` | `tam run` når agenten startes (agenter uten status-hooks blir stående her) |
+| `working` | Claude-hooks `UserPromptSubmit` og `PostToolUse` |
+| `waiting` | Claude-hooks `SessionStart`, `Stop` og `Notification` (venter på deg) |
+| `exited` | `tam run` når agenten avslutter |
+| `stopped` | `tam run --wait` etter restore |
+
+Status-hookene er rene shell-kommandoer (`tmux set -p -t "$TMUX_PANE" @tam_status ...`) uten Python, fordi `PostToolUse` kjører ved hvert verktøykall. Statusen lagres ikke i `state.json`.
+
+`tam sidebar` åpner en `fzf`-popup i full høyde langs venstre kant. Den viser sesjoner og vinduer, og agentvinduer har status. Et vindu med flere agentpanes viser den mest presserende statusen (`waiting` før `working`). Enter kjører `switch-client` til valgt sesjon eller vindu. Markøren starter på gjeldende vindu.
+
 ### `tam adopt`
 
 1. Viser en `fzf`-liste. Øverst står Claude-prosesser som kjører utenfor `tam`, med mappe, tty, navn og første melding. Under står nylig avsluttede samtaler fra `~/.claude/projects`.
 2. For en prosess som kjører: `tam` ber om bekreftelse, sender SIGTERM og venter til prosessen er avsluttet. Et svar Claude er midt i, går tapt.
 3. `tam` lager en pane som gjenopptar samtalen.
 4. `seen`-filer for prosesser som ikke lenger kjører, slettes.
+
+Kjøres `tam adopt` fra en Claude-sesjon (`! tam adopt`), er Claude en forelderprosess. Da flyttes den sesjonen uten liste og uten bekreftelse. `tam adopt` starter en hjelpeprosess i en egen prosessgruppe (`start_new_session`), skriver en melding som Claude viser, og avslutter. Hjelpeprosessen venter ett sekund, stopper Claude, gjenoppretter eller starter tmux, åpner vinduet med `--resume` og setter `@tam_attach_to`, slik at neste `tam` attacher til den sesjonen. Feil skrives til `~/.local/state/tam/adopt.log`.
 
 Sesjoner som ble startet før hooken var installert, finnes med `lsof` (mappe) og transkriptet som sist ble endret. Har du flere sesjoner i samme mappe, er det et gjett.
 
@@ -147,6 +168,7 @@ Sesjoner som ble startet før hooken var installert, finnes med `lsof` (mappe) o
 | `tam` | Restore ved behov, deretter attach |
 | `tam new [agent] [-n navn] [--split h\|v] [-- flagg]` | Ny agentpane |
 | `tam adopt` | Meld inn en ekstern eller avsluttet Claude-sesjon |
+| `tam sidebar` | Sesjoner og agenter med status, bytt med Enter |
 | `tam help` | Jukselapp med `tam`- og tmux-versjon: popup inne i tmux, ellers utskrift |
 | `tam setup` | Legg til `source`-linjen i `~/.tmux.conf`, installer Claude-hooken og sjekk avhengigheter |
 | `tam snapshot`, `tam run`, `tam hook`, `tam tmux-init` | Interne kommandoer, kalles av tmux, panes og hooks |
@@ -162,8 +184,9 @@ Taster:
 | `prefix + a` | Velg mappe i en `fzf`-popup, og start Claude der i et nytt vindu |
 | `prefix + A` | `tam new claude --split h` |
 | `prefix + h` | Jukselappen i en popup (`tam help`) |
+| `prefix + s` | Sidebar: sesjoner og vinduer med agentstatus (`tam sidebar`). Erstatter tmux sin standard `choose-tree -Zs`. |
 
-Tastene får en beskrivelse (`-N "tam: ..."`), så de vises i `prefix + ?`. En tast brukeren allerede har bundet til noe annet (f.eks. `h` for vim-navigasjon), overskrives ikke. Jukselappen viser da kommandoen i stedet for tasten.
+Tastene får en beskrivelse (`-N "tam: ..."`), så de vises i `prefix + ?`. En tast med tmux sin standardbinding (`s`) erstattes. En tast brukeren selv har bundet til noe annet (f.eks. `h` for vim-navigasjon), overskrives ikke. Jukselappen viser da kommandoen i stedet for tasten.
 
 Hver gang `tam` attacher, vises jukselappen som popup. Den lukkes med en vilkårlig tast. Utenfor tmux gjøres det med en engangs-hook på `client-attached`, siden klienten ikke finnes før `tam` har gjort `exec tmux attach`. Popupen tilpasses klientens størrelse (`tam help --client`), fordi tmux uten feilmelding avviser en popup som er større enn terminalen.
 

@@ -41,6 +41,7 @@ def record_session(session_id: str) -> None:
         return
     set_pane_option(pane, "@tam_session_id", session_id)
     set_pane_option(pane, "@tam_started", "1")
+    set_pane_option(pane, "@tam_status", "waiting")
     state.snapshot()
 
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import subprocess
-import sys
 
 from tam import harness as harness_mod
 from tam.tmux import query, server_running, session_names, tmux
@@ -51,10 +50,11 @@ def new(
     cwd: str | None = None,
     target: str | None = None,
     session_id: str | None = None,
-) -> int:
+    attach: bool = True,
+) -> str:
+    """Create the agent window or split. Returns the tmux session it was created in."""
     if harness not in harness_mod.load():
-        print(f"tam: unknown agent '{harness}'", file=sys.stderr)
-        return 1
+        raise SystemExit(f"tam: unknown agent '{harness}'")
     cwd = cwd or os.getcwd()
     project = project_name(cwd)
     target = target or os.environ.get("TMUX_PANE")
@@ -65,7 +65,7 @@ def new(
     else:
         # Outside tmux: use a session named after the project, then attach.
         session = project
-        attach_after = True
+        attach_after = attach
         if not server_running() or session not in session_names():
             tmux("new-session", "-d", "-s", session, "-c", cwd)
 
@@ -96,4 +96,4 @@ def new(
 
     if attach_after:
         os.execvp("tmux", ["tmux", "attach-session", "-t", f"={session}"])
-    return 0
+    return session

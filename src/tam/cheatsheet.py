@@ -22,15 +22,9 @@ def humanize(key: str) -> str:
 
 
 def _versions() -> str:
-    from importlib.metadata import PackageNotFoundError, version
-
-    try:
-        tam_version = version("tam")
-    except PackageNotFoundError:
-        tam_version = "dev"
     out = subprocess.run(["tmux", "-V"], capture_output=True, text=True).stdout.split()
     tmux_version = out[1] if len(out) > 1 else "?"
-    return f"tam {tam_version} · tmux {tmux_version}"
+    return f"tam {paths.tam_version()} · tmux {tmux_version}"
 
 
 def _hold(key: str) -> str:
@@ -64,11 +58,13 @@ def text(closing_hint: bool = False) -> str:
         (new_split, "new Claude in a split"),
         ("tam new codex", "another agent (see harnesses.toml)"),
         ("tam adopt", "take over a Claude running outside tmux"),
+        ("! tam adopt", "same, typed inside that Claude session"),
         ("Agent pane after exit or reboot", None),
         ("Enter", "resume the conversation"),
         ("q", "close the pane"),
         ("tmux", None),
-        (f"{p} → w", "switch session or window"),
+        (_key(p, "s") or "tam sidebar", "sessions and agents, switch with Enter"),
+        (f"{p} → w", "tmux tree of sessions and windows"),
         (f"{p} → n / p", "next / previous window"),
         (f"{p} → arrow", "move between panes"),
         (f"{p} → z", "zoom the pane (again to unzoom)"),
@@ -86,7 +82,11 @@ def text(closing_hint: bool = False) -> str:
             lines += ["", f" \033[1m{left}\033[0m"]
         else:
             lines.append(f"   {left:<20} {right}")
-    lines += ["", f" Open this sheet again: {sheet}"]
+    lines += [
+        "",
+        f" Open this sheet again: {sheet}",
+        " Copy text: hold ⌥ Option while selecting with the mouse",
+    ]
     if closing_hint:
         lines.append(" Press any key to close.")
     return "\n".join(lines)
@@ -103,7 +103,13 @@ def popup(client: str | None) -> int:
         client = tmux("display-message", "-p", "#{client_name}").strip()
     lines = text(closing_hint=True).splitlines()
     width = max(len(_ANSI.sub("", line)) for line in lines) + 4
-    open_popup(client, width, len(lines) + 2, [paths.tam_executable(), "help", "--print", "--wait"])
+    open_popup(
+        client,
+        width,
+        len(lines) + 2,
+        [paths.tam_executable(), "help", "--print", "--wait"],
+        title="cheat sheet",
+    )
     return 0
 
 

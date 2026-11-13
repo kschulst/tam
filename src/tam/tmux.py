@@ -60,7 +60,15 @@ def client_size(client: str) -> tuple[int, int]:
     return cols, rows
 
 
-def open_popup(client: str, width: int, height: int, argv: list[str]) -> None:
+def open_popup(
+    client: str,
+    width: int,
+    height: int,
+    argv: list[str],
+    title: str,
+    x: int | None = None,
+    y: int | None = None,
+) -> None:
     """Open a popup running argv on client, clamped to the client's size.
 
     tmux refuses a popup larger than the client without showing an error, and
@@ -68,12 +76,24 @@ def open_popup(client: str, width: int, height: int, argv: list[str]) -> None:
     """
     import shlex
 
+    from tam.paths import tam_version
+
     cols, rows = client_size(client)
+    # The title is on the border, so it stays visible when the content is cut.
+    full_title = f" {title} · tam {tam_version()} ".replace("#", "##")
+    position = []
+    if x is not None:
+        position += ["-x", str(x)]
+    if y is not None:
+        position += ["-y", str(y)]
     tmux(
         "display-popup",
         "-c",
         client,
         "-E",
+        "-T",
+        full_title,
+        *position,
         "-w",
         str(min(width, cols)),
         "-h",

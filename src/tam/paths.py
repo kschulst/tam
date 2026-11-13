@@ -39,3 +39,12 @@ def tam_executable() -> str:
     if os.sep in argv0 and os.path.exists(argv0):
         return os.path.abspath(argv0)
     return shutil.which("tam") or "tam"
+
+
+def tam_version() -> str:
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version("tam")
+    except PackageNotFoundError:
+        return "dev"

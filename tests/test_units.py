@@ -177,5 +177,52 @@ def test_brewfile_lists_required_tools():
     from tam.setup import REQUIRED_TOOLS, brewfile, brewfile_tools
 
     names = [name for name, _ in brewfile_tools(brewfile())]
-    assert REQUIRED_TOOLS <= set(names)
+    assert set(names) >= REQUIRED_TOOLS
     assert all(desc for _, desc in brewfile_tools(brewfile()))
+
+
+def test_claude_hooks_all_events_idempotent_and_upgrade_old_install(tmp_path):
+    from tam.setup import CLAUDE_HOOKS
+
+    settings = tmp_path / "settings.json"
+    # An install from an older tam version: only SessionStart.
+    old = "command -v tam >/dev/null 2>&1 && tam hook claude || true"
+    settings.write_text(json.dumps({"hooks": {"SessionStart": [{"hooks": [{"command": old}]}]}}))
+    assert install_claude_hook(settings) is True
+    assert install_claude_hook(settings) is False
+    hooks = json.loads(settings.read_text())["hooks"]
+    for event, command in CLAUDE_HOOKS.items():
+        commands = [h["command"] for g in hooks[event] for h in g["hooks"]]
+        assert commands == [command], event
+
+
+def test_sidebar_lines():
+    from tam.sidebar import lines
+
+    def row(s, w, name, harness="", status=""):
+        return {
+            "session_name": s,
+            "window_index": w,
+            "window_name": name,
+            "@tam_harness": harness,
+            "@tam_status": status,
+        }
+
+    rows = [
+        row("api", "1", "api:claude", "claude", "working"),
+        row("api", "1", "api:claude", "claude", "waiting"),  # split: most urgent wins
+        row("api", "2", "zsh"),
+        row("web", "1", "web:codex", "codex", ""),
+    ]
+    out, selected = lines(rows, ("api", "2"))
+    targets = [ln.split("\t")[0] for ln in out]
+    assert targets == ["=api:", "=api:1", "=api:2", "=web:", "=web:1"]
+    assert "waiting" in out[1] and "running" in out[4]
+    assert selected == 2
+
+
+def test_tmux_default_binding_is_replaced(env):  # noqa: F811
+    tmux("new-session", "-d", "-s", "d")
+    assert "choose-tree" in tmux("list-keys", "-T", "prefix", "s")
+    subprocess.run([TAM, "tmux-init"], check=True)
+    assert "tam: sessions" in tmux("list-keys", "-N", "-T", "prefix", "s")

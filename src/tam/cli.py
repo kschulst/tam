@@ -34,16 +34,8 @@ def _cheatsheet_popup() -> list[str]:
 
 def cmd_default(a: argparse.Namespace) -> int:
     from tam import state
-    from tam.new import project_name
-    from tam.tmux import global_option, session_names
 
-    names = session_names()
-    if names and global_option(state.RESTORED_FLAG) == "1":
-        last = (state.load() or {}).get("last_session")
-        session = last if last in names else min(names)
-    else:
-        cwd = os.getcwd()
-        session = state.restore(paths.tam_executable(), project_name(cwd), cwd)
+    session = state.ensure_tmux(paths.tam_executable(), os.getcwd())
     if a.no_attach:
         return 0
     return _attach(session, _cheatsheet_popup())
@@ -64,7 +56,13 @@ def cmd_new(a: argparse.Namespace) -> int:
         argv = [paths.tam_executable(), "new", a.agent, "--pick", "--dir", cwd or os.getcwd()]
         if a.target:
             argv += ["--target", a.target]
-        open_popup(a.popup_client, min(100, cols * 9 // 10), max(12, rows * 6 // 10), argv)
+        open_popup(
+            a.popup_client,
+            min(100, cols * 9 // 10),
+            max(12, rows * 6 // 10),
+            argv,
+            title=f"new {a.agent}",
+        )
         return 0
     if a.pick:
         from tam.dirs import pick
@@ -73,7 +71,7 @@ def cmd_new(a: argparse.Namespace) -> int:
         if cwd is None:
             return 0
 
-    return new(
+    new(
         cwd=cwd,
         tam_exe=paths.tam_executable(),
         harness=a.agent,
@@ -82,6 +80,7 @@ def cmd_new(a: argparse.Namespace) -> int:
         args=a.args,
         target=a.target,
     )
+    return 0
 
 
 def cmd_run(a: argparse.Namespace) -> int:
@@ -116,9 +115,12 @@ def cmd_hook(a: argparse.Namespace) -> int:
     return 2
 
 
-def cmd_adopt(_: argparse.Namespace) -> int:
-    from tam.adopt import adopt
+def cmd_adopt(a: argparse.Namespace) -> int:
+    from tam.adopt import adopt, finish
 
+    if a.finish:
+        pid, session_id, cwd = a.finish
+        return finish(paths.tam_executable(), int(pid), session_id, cwd)
     return adopt(paths.tam_executable())
 
 
@@ -126,6 +128,14 @@ def cmd_help(a: argparse.Namespace) -> int:
     from tam.cheatsheet import show
 
     return show(print_only=a.print_only, wait=a.wait, client=a.client)
+
+
+def cmd_sidebar(a: argparse.Namespace) -> int:
+    from tam import sidebar
+    from tam.tmux import tmux
+
+    client = a.client or tmux("display-message", "-p", "#{client_name}").strip()
+    return sidebar.pick(client) if a.pick else sidebar.popup(client)
 
 
 def cmd_setup(_: argparse.Namespace) -> int:
@@ -169,6 +179,7 @@ def main(argv: list[str] | None = None) -> int:
     s.set_defaults(func=cmd_new)
 
     s = sub.add_parser("adopt", help="move a Claude session from outside tam into tam")
+    s.add_argument("--finish", nargs=3, help=argparse.SUPPRESS)
     s.set_defaults(func=cmd_adopt)
 
     s = sub.add_parser("help", help="show the cheat sheet")
@@ -176,6 +187,11 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--wait", action="store_true", help=argparse.SUPPRESS)
     s.add_argument("--client", help=argparse.SUPPRESS)
     s.set_defaults(func=cmd_help)
+
+    s = sub.add_parser("sidebar", help="list sessions and agents, switch with Enter")
+    s.add_argument("--client", help=argparse.SUPPRESS)
+    s.add_argument("--pick", action="store_true", help=argparse.SUPPRESS)
+    s.set_defaults(func=cmd_sidebar)
 
     s = sub.add_parser("setup", help="install the tmux config line and the Claude hook")
     s.set_defaults(func=cmd_setup)

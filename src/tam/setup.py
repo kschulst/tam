@@ -69,6 +69,13 @@ def key_bindings(exe: str) -> list[list[str]]:
             f"{exe} new claude --split h --target '#{{pane_id}}'",
         ],
         ["h", "tam: cheat sheet", *popup_command(exe)],
+        [
+            "s",
+            "tam: sessions and agents",
+            "run-shell",
+            "-b",
+            f"{exe} sidebar --client '#{{client_name}}'",
+        ],
     ]
 
 
@@ -77,16 +84,24 @@ def popup_command(exe: str) -> list[str]:
     return ["run-shell", "-b", f"{exe} help --client '#{{client_name}}'"]
 
 
+# tmux's own bindings for keys tam uses. tam replaces these, but not a user's binding.
+TMUX_DEFAULT_BINDINGS = {"s": "choose-tree -Zs"}
+
+
 def tam_key(key: str) -> bool | None:
-    """True if tam owns the prefix key, False if the user bound it, None if unbound."""
-    out = tmux("list-keys", "-N", "-T", "prefix", key, check=False).strip()
-    if out:
-        return "tam:" in out
+    """True if tam owns the prefix key, False if the user bound it, None if free.
+
+    A key with tmux's default binding counts as free.
+    """
+    if "tam:" in tmux("list-keys", "-N", "-T", "prefix", key, check=False):
+        return True
     bound = tmux("list-keys", "-T", "prefix", key, check=False).strip()
-    if not bound:
+    m = re.search(r"-T prefix\s+\S+\s+(.*)$", bound)
+    command = m.group(1).strip() if m else bound
+    if not command or command == TMUX_DEFAULT_BINDINGS.get(key):
         return None
     # Bindings from tam versions that did not set a note.
-    return "tam" in bound and any(c in bound for c in (" new claude", " help --"))
+    return "tam" in command and any(c in command for c in (" new claude", " help --"))
 
 
 def _bind(key: str, note: str, command: list[str]) -> None:
@@ -139,16 +154,48 @@ def _tmux_version() -> tuple[int, int] | None:
     return (int(m.group(1)), int(m.group(2))) if m else None
 
 
+def _status_command(status: str) -> str:
+    # Plain shell, no Python: these hooks run on every prompt and tool call.
+    return (
+        f'[ -n "$TMUX_PANE" ] && tmux set -p -t "$TMUX_PANE" @tam_status {status}'
+        " 2>/dev/null || true"
+    )
+
+
+CLAUDE_HOOKS = {
+    "SessionStart": "command -v tam >/dev/null 2>&1 && tam hook claude || true",
+    "UserPromptSubmit": _status_command("working"),
+    "PostToolUse": _status_command("working"),
+    "Stop": _status_command("waiting"),
+    "Notification": _status_command("waiting"),
+}
+
+
+def _is_tam_command(command: str) -> bool:
+    return "tam hook claude" in command or "@tam_status" in command
+
+
 def install_claude_hook(settings_path: Path) -> bool:
-    """Add the SessionStart hook. Returns True if the file changed."""
-    command = "command -v tam >/dev/null 2>&1 && tam hook claude || true"
+    """Add or update tam's Claude Code hooks. Returns True if the file changed."""
     data = json.loads(settings_path.read_text()) if settings_path.exists() else {}
-    groups = data.setdefault("hooks", {}).setdefault("SessionStart", [])
-    for group in groups:
-        for h in group.get("hooks", []):
-            if "tam hook claude" in h.get("command", ""):
-                return False
-    groups.append({"hooks": [{"type": "command", "command": command}]})
+    hooks = data.setdefault("hooks", {})
+    changed = False
+    for event, command in CLAUDE_HOOKS.items():
+        groups = hooks.setdefault(event, [])
+        existing = [
+            h for g in groups for h in g.get("hooks", []) if _is_tam_command(h.get("command", ""))
+        ]
+        if existing and all(h["command"] == command for h in existing):
+            continue
+        for g in groups:
+            g["hooks"] = [
+                h for h in g.get("hooks", []) if not _is_tam_command(h.get("command", ""))
+            ]
+        groups[:] = [g for g in groups if g.get("hooks")]
+        groups.append({"hooks": [{"type": "command", "command": command}]})
+        changed = True
+    if not changed:
+        return False
     settings_path.parent.mkdir(parents=True, exist_ok=True)
     if settings_path.exists():
         shutil.copy(settings_path, settings_path.with_suffix(".json.tam-backup"))
@@ -225,9 +272,9 @@ def setup() -> int:
 
     settings = paths.claude_dir() / "settings.json"
     if install_claude_hook(settings):
-        print(f"✓ added SessionStart hook to {settings}")
+        print(f"✓ added tam's hooks to {settings}")
     else:
-        print(f"✓ {settings} has the tam hook")
+        print(f"✓ {settings} has tam's hooks")
 
     if not shutil.which("tam"):
         print("✗ tam is not on PATH. tmux and the Claude hook call `tam` by name.")
