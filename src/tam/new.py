@@ -124,3 +124,25 @@ def new(
 
         attach(session)
     return session
+
+
+def new_terminal(*, cwd: str, split: str | None, target: str | None, attach: bool = True) -> str:
+    """A plain shell in a new window or split. Returns the session."""
+    target = target or os.environ.get("TMUX_PANE")
+    if target:
+        session = tmux("display-message", "-p", "-t", target, "#{session_name}").strip()
+        if split:
+            tmux("split-window", "-h" if split == "h" else "-v", "-t", target, "-c", cwd)
+        else:
+            tmux("new-window", "-t", f"={session}:", "-c", cwd)
+        return session
+    session = session_name(cwd)
+    if not server_running() or session not in session_names():
+        tmux("new-session", "-d", "-s", session, "-c", cwd)
+    else:
+        tmux("new-window", "-t", f"={session}:", "-c", cwd)
+    if attach:
+        from tam.tmux import attach as attach_session
+
+        attach_session(session)
+    return session

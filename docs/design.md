@@ -188,7 +188,8 @@ Taster:
 
 | Tast | Funksjon |
 |---|---|
-| `prefix + a`, `⌥ a` | Velg mappe i en `fzf`-popup, og start Claude der i et nytt vindu |
+| `prefix + a`, `⌥ a` | Velg mappe i en `fzf`-popup og start standardagenten der: Enter i nytt vindu, `Ctrl+v` split til høyre, `Ctrl+s` split under |
+| `prefix + t`, `⌥ t` | Samme velger for en vanlig terminal uten agent (`tam term`). Erstatter tmux sin `clock-mode` på `t`. |
 | `prefix + A` | `tam new claude --split h` |
 | `prefix + h`, `⌥ h` | Jukselappen i en popup (`tam help`) |
 | `prefix + .` | Flytt vinduet til en annen sesjon, valgt i en `fzf`-popup (`tam move`). Et nytt navn lager sesjonen. Flyttes det siste vinduet ut av en sesjon, følger klienten med. Erstatter tmux sin standard `move-window`-prompt. |

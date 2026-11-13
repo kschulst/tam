@@ -35,10 +35,10 @@ tam
 
 | Keys | Does |
 |---|---|
-| `⌥ a` | New agent in a new window. Pick the directory; `Tab` picks another agent. |
+| `⌥ a` | New agent. Pick the directory; `Enter` opens a new window, `Ctrl+v` / `Ctrl+s` a split right / below, `Tab` picks another agent. |
+| `⌥ t` | New terminal (no agent), with the same picker |
 | `⌥ s` | Sidebar: sessions and agents, `working` or `waiting`. Enter jumps there. |
 | `⌥ h` | Cheat sheet |
-| `Ctrl+b → A` | New agent in a split |
 | `Ctrl+b → .` | Move the window to another session |
 
 Every key also works as `Ctrl+b` followed by the letter. The `⌥` keys need Option to send Meta (iTerm2: Profiles → Keys → Left Option key: Esc+).
@@ -68,3 +68,14 @@ Run `tam`. Sessions, windows, splits and directories come back. Agent panes wait
 - [How it works](docs/how-it-works.md): what tam saves, how restore works, the hooks it installs
 
 Without Homebrew: `uv tool install git+https://github.com/kschulst/tam`, then `tam setup`.
+
+## Develop
+
+```sh
+just setup     # uv, just, gh and the Python environment
+just dev-on    # `tam` and the tmux keys run this checkout; `just dev-off` goes back to Homebrew
+just check     # lint and tests
+just release   # tag, GitHub Release and Homebrew formula (patch; or minor, major)
+```
+
+`just` lists every task.

@@ -317,3 +317,35 @@ def test_picker_tab_cycles_installed_agents(tmp_path, monkeypatch):
     state.write_text("claude")
     assert dirs.cycle_agent(str(state)) == "change-prompt(new codex in> )"
     assert dirs.cycle_agent(str(state)) == "change-prompt(new claude in> )"
+
+
+def test_picker_split_keys(tmp_path, monkeypatch):
+    from tam import dirs
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    monkeypatch.setattr(dirs, "candidates", lambda current: [current])
+    target = tmp_path / "proj"
+    target.mkdir()
+
+    def fzf_output(text):
+        class Proc:
+            returncode = 0
+            stdout = text
+
+        return lambda *a, **k: Proc()
+
+    for key, split in (("", None), ("ctrl-v", "h"), ("ctrl-s", "v")):
+        monkeypatch.setattr(dirs.subprocess, "run", fzf_output(f"\n{key}\n{target}\n"))
+        assert dirs.pick(str(tmp_path), None) == (str(target), None, split)
+
+
+def test_term_opens_shell_window_and_split(env):  # noqa: F811
+    tmux("new-session", "-d", "-s", "t", "-c", str(env / "a"))
+    pane = tmux("list-panes", "-t", "t:", "-F", "#{pane_id}").strip()
+    subprocess.run([TAM, "term", "-C", str(env / "b"), "--target", pane], check=True)
+    subprocess.run([TAM, "term", "--split", "v", "--target", pane], check=True, cwd=env / "c")
+    panes = tmux("list-panes", "-s", "-t", "t", "-F", "#{window_index} #{@tam_harness}").split("\n")
+    assert len([p for p in panes if p]) == 3  # shell, split shell, new window shell
+    assert all(not p.split(" ", 1)[1:] or not p.split(" ", 1)[1] for p in panes if p)
+    windows = tmux("list-windows", "-t", "t", "-F", "#{window_panes}").split()
+    assert windows == ["2", "1"]

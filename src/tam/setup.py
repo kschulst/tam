@@ -66,6 +66,12 @@ def key_bindings(exe: str) -> list[list[str]]:
         " --dir #{q:pane_current_path}",
     ]
     sidebar = ["run-shell", "-b", f"{exe} sidebar --client '#{{client_name}}'"]
+    new_terminal = [
+        "run-shell",
+        "-b",
+        f"{exe} term --popup-client '#{{client_name}}' --target '#{{pane_id}}'"
+        " --dir #{q:pane_current_path}",
+    ]
     return [
         ["prefix", "a", "tam: new agent in a new window (pick directory)", *new_window],
         ["root", "M-a", "tam: new agent in a new window (pick directory)", *new_window],
@@ -76,6 +82,8 @@ def key_bindings(exe: str) -> list[list[str]]:
             *here,
             f"{exe} new --split h --target '#{{pane_id}}'",
         ],
+        ["prefix", "t", "tam: new terminal (pick directory)", *new_terminal],
+        ["root", "M-t", "tam: new terminal (pick directory)", *new_terminal],
         ["prefix", "h", "tam: cheat sheet", *popup_command(exe)],
         ["root", "M-h", "tam: cheat sheet", *popup_command(exe)],
         ["prefix", "s", "tam: sessions and agents", *sidebar],
@@ -97,7 +105,11 @@ def popup_command(exe: str) -> list[str]:
 
 
 # tmux's own bindings for keys tam uses. tam replaces these, but not a user's binding.
-TMUX_DEFAULT_BINDINGS = {"s": "choose-tree -Zs", ".": 'command-prompt { move-window -t "%%" }'}
+TMUX_DEFAULT_BINDINGS = {
+    "s": "choose-tree -Zs",
+    ".": 'command-prompt { move-window -t "%%" }',
+    "t": "clock-mode",
+}
 
 
 def tam_key(key: str, table: str = "prefix") -> bool | None:
@@ -113,7 +125,7 @@ def tam_key(key: str, table: str = "prefix") -> bool | None:
     if not command or (table == "prefix" and command == TMUX_DEFAULT_BINDINGS.get(key)):
         return None
     # Bindings from tam versions that did not set a note.
-    return "tam" in command and any(c in command for c in (" new ", " help --"))
+    return "tam" in command and any(c in command for c in (" new ", " term ", " help --"))
 
 
 def _bind(table: str, key: str, note: str, command: list[str]) -> None:

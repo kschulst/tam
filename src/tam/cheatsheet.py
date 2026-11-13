@@ -62,7 +62,9 @@ def text(closing_hint: bool = False) -> str:
     rows = [
         ("Agents", None),
         (new_window, f"new {agent} in a new window, pick directory"),
+        ("Ctrl+v / Ctrl+s", "in the picker: split right / below"),
         (new_split, f"new {agent} in a split"),
+        (_keys(p, "t") or "tam term", "new terminal, pick directory"),
         ("Tab in the picker", "use another agent this time"),
         ("tam agent <name>", "change the default agent"),
         ("tam adopt", "take over a Claude running outside tmux"),

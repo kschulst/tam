@@ -81,19 +81,32 @@ def cycle_agent(state_file: str) -> str:
     return f"change-prompt(new {nxt} in> )"
 
 
-def pick(current: str, agent: str) -> tuple[str, str] | None:
-    """(directory, agent), or None if cancelled. Tab switches the agent."""
+# Keys in the picker that choose where the new pane goes. Enter: a new window.
+LAYOUT_KEYS = {"ctrl-v": "h", "ctrl-s": "v"}
+
+
+def pick(current: str, agent: str | None) -> tuple[str, str | None, str | None] | None:
+    """(directory, agent, split) or None if cancelled.
+
+    agent None picks a directory for a plain terminal. split is None for a new
+    window, "h" for a split to the right (Ctrl+v), "v" for one below (Ctrl+s).
+    Tab switches the agent.
+    """
     import shlex
 
     from tam.harness import installed_names
 
     state_file = paths.state_dir() / f"picker-agent-{os.getpid()}"
     state_file.parent.mkdir(parents=True, exist_ok=True)
-    state_file.write_text(agent)
+    state_file.write_text(agent or "")
     exe = shlex.quote(paths.tam_executable())
-    header = "Enter: use directory · type a path to use one not listed · Esc: cancel"
-    if len(installed_names()) > 1:
+    what = agent or "terminal"
+    header = "Enter: new window · Ctrl+v: split right · Ctrl+s: split below · Esc: cancel"
+    bind = []
+    if agent and len(installed_names()) > 1:
         header += "\nTab: switch agent (" + ", ".join(installed_names()) + ")"
+        bind = ["--bind", f"tab:transform({exe} new --cycle-agent {shlex.quote(str(state_file))})"]
+    header += "\nType a path to use a directory that is not listed"
     lines = "\n".join(_short(d) for d in candidates(current))
     try:
         proc = subprocess.run(
@@ -102,23 +115,24 @@ def pick(current: str, agent: str) -> tuple[str, str] | None:
                 "--print-query",
                 "--no-sort",
                 "--prompt",
-                f"new {agent} in> ",
+                f"new {what} in> ",
                 "--header",
                 header,
-                "--bind",
-                f"tab:transform({exe} new --cycle-agent {shlex.quote(str(state_file))})",
+                "--expect",
+                ",".join(LAYOUT_KEYS),
+                *bind,
             ],
             input=lines,
             stdout=subprocess.PIPE,
             text=True,
         )
-        chosen_agent = state_file.read_text().strip() or agent
+        chosen_agent = (state_file.read_text().strip() or agent) if agent else None
     finally:
         state_file.unlink(missing_ok=True)
     if proc.returncode not in (0, 1):  # 130: cancelled
         return None
-    out = proc.stdout.split("\n")
-    query = out[0] if out else ""
-    selection = out[1] if len(out) > 1 else ""
+    # With --print-query and --expect: query, pressed key, selection.
+    out = proc.stdout.split("\n") + ["", "", ""]
+    query, key, selection = out[0], out[1], out[2]
     directory = resolve(query, selection)
-    return (directory, chosen_agent) if directory else None
+    return (directory, chosen_agent, LAYOUT_KEYS.get(key)) if directory else None

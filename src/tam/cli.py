@@ -68,12 +68,14 @@ def cmd_new(a: argparse.Namespace) -> int:
     if cwd and not os.path.isdir(cwd):
         print(f"tam: no such directory: {a.dir}", file=sys.stderr)
         return 1
+    terminal = getattr(a, "terminal", False)
     if a.popup_client:
         # Run the directory picker in a popup; it calls `tam new --pick` with literal values.
         from tam.tmux import client_size, open_popup
 
         cols, rows = client_size(a.popup_client)
-        argv = [paths.tam_executable(), "new", agent, "--pick", "--dir", cwd or os.getcwd()]
+        command = ["term"] if terminal else ["new", agent]
+        argv = [paths.tam_executable(), *command, "--pick", "--dir", cwd or os.getcwd()]
         if a.target:
             argv += ["--target", a.target]
         open_popup(
@@ -81,23 +83,30 @@ def cmd_new(a: argparse.Namespace) -> int:
             min(100, cols * 9 // 10),
             max(12, rows * 6 // 10),
             argv,
-            title="new agent",
+            title="new terminal" if terminal else "new agent",
         )
         return 0
+    split = a.split
     if a.pick:
         from tam.dirs import pick
 
-        picked = pick(cwd or os.getcwd(), agent)
+        picked = pick(cwd or os.getcwd(), None if terminal else agent)
         if picked is None:
             return 0
-        cwd, agent = picked
+        cwd, picked_agent, split = picked
+        agent = picked_agent or agent
 
+    if terminal:
+        from tam.new import new_terminal
+
+        new_terminal(cwd=cwd or os.getcwd(), split=split, target=a.target)
+        return 0
     new(
         cwd=cwd,
         tam_exe=paths.tam_executable(),
         harness=agent,
         name=a.name,
-        split=a.split,
+        split=split,
         args=a.args,
         target=a.target,
     )
@@ -244,6 +253,14 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--popup-client", help=argparse.SUPPRESS)
     s.add_argument("--target", help=argparse.SUPPRESS)
     s.set_defaults(func=cmd_new)
+
+    s = sub.add_parser("term", help="open a terminal (no agent) in a new window or split")
+    s.add_argument("-C", "--dir", help="directory to start in (default: current)")
+    s.add_argument("--split", choices=["h", "v"])
+    s.add_argument("--target", help=argparse.SUPPRESS)
+    s.add_argument("--pick", action="store_true", help=argparse.SUPPRESS)
+    s.add_argument("--popup-client", help=argparse.SUPPRESS)
+    s.set_defaults(func=cmd_new, terminal=True, agent=None, name=None, cycle_agent=None)
 
     s = sub.add_parser("adopt", help="move a Claude session from outside tam into tam")
     s.add_argument("--finish", nargs=3, help=argparse.SUPPRESS)
