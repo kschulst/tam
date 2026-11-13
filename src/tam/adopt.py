@@ -1,0 +1,202 @@
+"""`tam adopt`: move a Claude session from outside tam into a tam pane."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import signal
+import subprocess
+import sys
+import time
+from dataclasses import dataclass
+from pathlib import Path
+
+from tam import paths
+from tam.new import new
+from tam.tmux import query, server_running
+
+RECENT_LIMIT = 30
+
+
+@dataclass
+class Candidate:
+    session_id: str
+    cwd: str
+    title: str
+    pid: int | None = None
+    tty: str = ""
+    mtime: float = 0.0
+
+    def line(self) -> str:
+        where = self.cwd.replace(str(Path.home()), "~")
+        if self.pid:
+            status = f"running  {self.tty:<8}"
+        else:
+            status = time.strftime("%Y-%m-%d %H:%M", time.localtime(self.mtime))
+        return f"{status}  {where}  {self.title}"
+
+
+def project_dir(cwd: str) -> Path:
+    return paths.claude_dir() / "projects" / re.sub(r"[^A-Za-z0-9]", "-", cwd)
+
+
+def transcript_info(path: Path) -> tuple[str, str]:
+    """(cwd, first user message) from a transcript."""
+    cwd, title = "", ""
+    try:
+        with path.open() as f:
+            for i, line in enumerate(f):
+                if i > 200 or (cwd and title):
+                    break
+                try:
+                    d = json.loads(line)
+                except ValueError:
+                    continue
+                cwd = cwd or d.get("cwd", "")
+                if d.get("type") == "user" and not title:
+                    content = d.get("message", {}).get("content")
+                    if isinstance(content, list):
+                        content = next(
+                            (c.get("text", "") for c in content if c.get("type") == "text"), ""
+                        )
+                    if isinstance(content, str) and not content.startswith("<"):
+                        title = " ".join(content.split())[:80]
+    except OSError:
+        pass
+    return cwd, title
+
+
+def _running_claude() -> list[tuple[int, str]]:
+    out = subprocess.run(["ps", "-axo", "pid=,tty=,comm="], capture_output=True, text=True).stdout
+    procs = []
+    for line in out.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) == 3 and os.path.basename(parts[2]) == "claude":
+            procs.append((int(parts[0]), parts[1]))
+    return procs
+
+
+def _tmux_ttys() -> set[str]:
+    if not server_running():
+        return set()
+    return {r["pane_tty"].removeprefix("/dev/") for r in query(["list-panes", "-a"], ["pane_tty"])}
+
+
+def _proc_cwd(pid: int) -> str:
+    out = subprocess.run(
+        ["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"], capture_output=True, text=True
+    ).stdout
+    return next((line[1:] for line in out.splitlines() if line.startswith("n")), "")
+
+
+def _newest_transcript(cwd: str) -> Path | None:
+    files = sorted(project_dir(cwd).glob("*.jsonl"), key=lambda p: p.stat().st_mtime)
+    return files[-1] if files else None
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def _gc_seen() -> None:
+    seen = paths.seen_dir()
+    if not seen.exists():
+        return
+    for f in seen.iterdir():
+        if f.name.isdigit() and not _alive(int(f.name)):
+            f.unlink(missing_ok=True)
+
+
+def candidates() -> list[Candidate]:
+    _gc_seen()
+    in_tmux = _tmux_ttys()
+    result: list[Candidate] = []
+    used: set[str] = set()
+
+    for pid, tty in _running_claude():
+        seen_file = paths.seen_dir() / str(pid)
+        if seen_file.exists():
+            info = json.loads(seen_file.read_text())
+            sid, cwd = info["session_id"], info["cwd"]
+        else:
+            # Started before the hook was installed: guess from the newest transcript.
+            cwd = _proc_cwd(pid)
+            t = _newest_transcript(cwd) if cwd else None
+            sid = t.stem if t else ""
+        used.add(sid)
+        if tty in in_tmux or not sid:
+            continue
+        _, title = transcript_info(project_dir(cwd) / f"{sid}.jsonl")
+        result.append(Candidate(sid, cwd, title, pid=pid, tty=tty))
+
+    recent = sorted(
+        (paths.claude_dir() / "projects").glob("*/*.jsonl"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    for t in recent:
+        if len(result) >= RECENT_LIMIT:
+            break
+        if t.stem in used:
+            continue
+        cwd, title = transcript_info(t)
+        if not cwd or not title:
+            continue
+        result.append(Candidate(t.stem, cwd, title, mtime=t.stat().st_mtime))
+    return result
+
+
+def _pick(items: list[Candidate]) -> Candidate | None:
+    lines = "\n".join(f"{i}\t{c.line()}" for i, c in enumerate(items))
+    proc = subprocess.run(
+        ["fzf", "--delimiter", "\t", "--with-nth", "2..", "--prompt", "adopt> ", "--no-sort"],
+        input=lines,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return None
+    return items[int(proc.stdout.split("\t", 1)[0])]
+
+
+def _stop(pid: int) -> bool:
+    os.kill(pid, signal.SIGTERM)
+    for _ in range(50):
+        if not _alive(pid):
+            return True
+        time.sleep(0.2)
+    return False
+
+
+def adopt(tam_exe: str) -> int:
+    items = candidates()
+    if not items:
+        print("tam: no Claude sessions to adopt")
+        return 0
+    c = _pick(items)
+    if c is None:
+        return 0
+    if c.pid:
+        answer = input(f"Stop claude (pid {c.pid}, {c.tty}) and continue it here? [y/N] ")
+        if answer.strip().lower() not in ("y", "yes"):
+            return 0
+        if not _stop(c.pid):
+            print(f"tam: pid {c.pid} did not exit", file=sys.stderr)
+            return 1
+    cwd = c.cwd if os.path.isdir(c.cwd) else str(Path.home())
+    return new(
+        tam_exe=tam_exe,
+        harness="claude",
+        name=None,
+        split=None,
+        args=[],
+        cwd=cwd,
+        session_id=c.session_id,
+    )

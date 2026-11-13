@@ -1,0 +1,14 @@
+# Built-in agent definitions. Override or extend in ~/.config/tam/harnesses.toml.
+#
+# start:  command for a new session. {name} is the pane's agent name.
+# resume: command to continue the session. {id} is the session id reported
+#         by the agent's hook. Without {id} the command runs as written once
+#         the pane has started the agent before. Without resume, start is used.
+
+[harness.claude]
+start = "claude -n {name}"
+resume = "claude --resume {id}"
+
+[harness.codex]
+start = "codex"
+resume = "codex resume --last"
