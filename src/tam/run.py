@@ -74,9 +74,9 @@ def _pick_dir(name: str, gone: str) -> bool:
 
     if not ask(f"{name}: directory {gone} no longer exists. Pick another one?"):
         return False
-    chosen = pick(os.getcwd())
-    if chosen:
-        os.chdir(chosen)
+    picked = pick(os.getcwd(), name)
+    if picked:
+        os.chdir(picked[0])
     os.environ["PWD"] = os.getcwd()
     return True
 

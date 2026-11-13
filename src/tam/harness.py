@@ -52,3 +52,37 @@ def load() -> dict[str, Harness]:
             continue
         result[key] = Harness(name=key, start=value["start"], resume=value.get("resume"))
     return result
+
+
+def installed(h: Harness) -> bool:
+    """True if the agent's program is on PATH."""
+    import shutil
+
+    parts = shlex.split(h.start)
+    return bool(parts) and shutil.which(os.path.expanduser(parts[0])) is not None
+
+
+def installed_names() -> list[str]:
+    return [name for name, h in load().items() if installed(h)]
+
+
+# Preferred defaults when the user has not chosen one.
+_PREFERRED = ["claude", "codex"]
+
+
+def suggested_default(names: list[str]) -> str | None:
+    for name in _PREFERRED:
+        if name in names:
+            return name
+    return names[0] if names else None
+
+
+def default_agent() -> str:
+    """The configured default agent if installed, else a suggestion."""
+    from tam import config
+
+    names = installed_names()
+    chosen = config.get("default_agent")
+    if chosen and chosen in names:
+        return chosen
+    return suggested_default(names) or "claude"

@@ -21,12 +21,10 @@ def _attach(session: str, then: list[str]) -> int:
     hook = "client-attached[43]"
     command = " ".join(shlex.quote(part) for part in then)
     tmux("set-hook", "-g", hook, f"set-hook -gu {hook} ; {command}")
-    if not (sys.stdin.isatty() and sys.stdout.isatty()):
-        print(f"tam: tmux is running with session '{session}'. Run tam in a terminal to attach.")
-        return 0
-    from tam.tmux import clean_env
+    from tam.tmux import attach
 
-    os.execvpe("tmux", ["tmux", "attach-session", "-t", f"={session}"], clean_env())
+    attach(session)
+    return 0
 
 
 def _cheatsheet_popup() -> list[str]:
@@ -56,7 +54,15 @@ def cmd_default(a: argparse.Namespace) -> int:
 
 
 def cmd_new(a: argparse.Namespace) -> int:
+    from tam.harness import default_agent
     from tam.new import new
+
+    if a.cycle_agent:
+        from tam.dirs import cycle_agent
+
+        print(cycle_agent(a.cycle_agent))
+        return 0
+    agent = a.agent or default_agent()
 
     cwd = os.path.abspath(os.path.expanduser(a.dir)) if a.dir else None
     if cwd and not os.path.isdir(cwd):
@@ -67,7 +73,7 @@ def cmd_new(a: argparse.Namespace) -> int:
         from tam.tmux import client_size, open_popup
 
         cols, rows = client_size(a.popup_client)
-        argv = [paths.tam_executable(), "new", a.agent, "--pick", "--dir", cwd or os.getcwd()]
+        argv = [paths.tam_executable(), "new", agent, "--pick", "--dir", cwd or os.getcwd()]
         if a.target:
             argv += ["--target", a.target]
         open_popup(
@@ -75,20 +81,21 @@ def cmd_new(a: argparse.Namespace) -> int:
             min(100, cols * 9 // 10),
             max(12, rows * 6 // 10),
             argv,
-            title=f"new {a.agent}",
+            title="new agent",
         )
         return 0
     if a.pick:
         from tam.dirs import pick
 
-        cwd = pick(cwd or os.getcwd())
-        if cwd is None:
+        picked = pick(cwd or os.getcwd(), agent)
+        if picked is None:
             return 0
+        cwd, agent = picked
 
     new(
         cwd=cwd,
         tam_exe=paths.tam_executable(),
-        harness=a.agent,
+        harness=agent,
         name=a.name,
         split=a.split,
         args=a.args,
@@ -161,6 +168,42 @@ def cmd_sidebar(a: argparse.Namespace) -> int:
     return sidebar.pick(client) if a.pick else sidebar.popup(client)
 
 
+def cmd_move(a: argparse.Namespace) -> int:
+    from tam import move
+    from tam.tmux import tmux
+
+    client = a.client or tmux("display-message", "-p", "#{client_name}").strip()
+    window = a.window or tmux("display-message", "-p", "#{window_id}").strip()
+    if a.to:
+        move.move(client, window, a.to)
+        return 0
+    return move.pick(client, window) if a.pick else move.popup(client, window)
+
+
+def cmd_agent(a: argparse.Namespace) -> int:
+    from tam import config
+    from tam.harness import default_agent, installed_names, load
+
+    names = installed_names()
+    if a.name:
+        if a.name not in load():
+            print(f"tam: unknown agent '{a.name}'. Add it to {paths.config_dir()}/harnesses.toml")
+            return 1
+        if a.name not in names:
+            print(f"tam: '{a.name}' is not installed (not on PATH)")
+            return 1
+        config.set("default_agent", a.name)
+        print(f"tam: default agent is now {a.name}")
+        return 0
+    default = default_agent()
+    for name in names:
+        print(f"{'*' if name == default else ' '} {name}")
+    print("\nChange the default: tam agent <name>")
+    print(f"Add an agent: a [harness.<name>] block in {paths.config_dir()}/harnesses.toml,")
+    print('  e.g.  [harness.myagent]  start = "myagent"  resume = "myagent --continue"')
+    return 0
+
+
 def cmd_setup(_: argparse.Namespace) -> int:
     from tam.setup import setup
 
@@ -192,7 +235,8 @@ def main(argv: list[str] | None = None) -> int:
     sub = p.add_subparsers(metavar="command")
 
     s = sub.add_parser("new", help="open an agent in a new window or split")
-    s.add_argument("agent", nargs="?", default="claude")
+    s.add_argument("agent", nargs="?", help="agent to start (default: see tam agent)")
+    s.add_argument("--cycle-agent", help=argparse.SUPPRESS)
     s.add_argument("-n", "--name")
     s.add_argument("--split", choices=["h", "v"])
     s.add_argument("-C", "--dir", help="directory to start in (default: current)")
@@ -218,6 +262,17 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--footer", help=argparse.SUPPRESS)
     s.add_argument("--click", help=argparse.SUPPRESS)
     s.set_defaults(func=cmd_sidebar)
+
+    s = sub.add_parser("move", help="move the current window to another session")
+    s.add_argument("to", nargs="?", help="destination session (default: pick)")
+    s.add_argument("--client", help=argparse.SUPPRESS)
+    s.add_argument("--window", help=argparse.SUPPRESS)
+    s.add_argument("--pick", action="store_true", help=argparse.SUPPRESS)
+    s.set_defaults(func=cmd_move)
+
+    s = sub.add_parser("agent", help="list installed agents, or set the default: tam agent <name>")
+    s.add_argument("name", nargs="?")
+    s.set_defaults(func=cmd_agent)
 
     s = sub.add_parser("setup", help="install the tmux config line and the Claude hook")
     s.set_defaults(func=cmd_setup)

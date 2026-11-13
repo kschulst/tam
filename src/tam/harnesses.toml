@@ -4,6 +4,10 @@
 # resume: command to continue the session. {id} is the session id reported
 #         by the agent's hook. Without {id} the command runs as written once
 #         the pane has started the agent before. Without resume, start is used.
+#
+# An agent counts as installed when the first word of `start` is on PATH.
+# Resume commands without {id} continue the most recent session in the pane's
+# directory, so two panes with the same agent in one directory share it.
 
 [harness.claude]
 start = "claude -n {name}"
@@ -12,3 +16,40 @@ resume = "claude --resume {id}"
 [harness.codex]
 start = "codex"
 resume = "codex resume --last"
+
+[harness.gemini]
+start = "gemini"
+resume = "gemini --resume latest"
+
+[harness.qwen]
+start = "qwen"
+resume = "qwen --continue"
+
+[harness.opencode]
+start = "opencode"
+resume = "opencode --continue"
+
+[harness.crush]
+start = "crush"
+resume = "crush --continue"
+
+[harness.copilot]
+start = "copilot"
+resume = "copilot --continue"
+
+[harness.cursor]
+start = "cursor-agent"
+resume = "cursor-agent resume"
+
+[harness.goose]
+start = "goose session"
+resume = "goose session --resume"
+
+[harness.aider]
+start = "aider"
+resume = "aider --restore-chat-history"
+
+# Amp resumes by thread id only (`amp threads continue <id>`), which tam cannot
+# learn yet, so a restored Amp pane starts a new thread.
+[harness.amp]
+start = "amp"

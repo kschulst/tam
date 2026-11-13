@@ -69,6 +69,7 @@ def new(
     target = target or os.environ.get("TMUX_PANE")
     attach_after = False
 
+    command = None
     if target:
         session = tmux("display-message", "-p", "-t", target, "#{session_name}").strip()
     else:
@@ -76,9 +77,24 @@ def new(
         session = session_name(cwd)
         attach_after = attach
         if not server_running() or session not in session_names():
-            tmux("new-session", "-d", "-s", session, "-c", cwd)
+            # A new session gets the agent as its first window, not an empty shell.
+            name = name or harness
+            command = run_command(tam_exe, harness, name, args, session_id)
+            tmux(
+                "new-session",
+                "-d",
+                "-s",
+                session,
+                "-c",
+                cwd,
+                "-n",
+                f"{project}:{name}",
+                *command,
+            )
 
-    if split:
+    if command:
+        pass
+    elif split:
         name = name or harness
         flag = "-h" if split == "h" else "-v"
         tmux(
@@ -104,7 +120,7 @@ def new(
         )
 
     if attach_after:
-        from tam.tmux import clean_env
+        from tam.tmux import attach
 
-        os.execvpe("tmux", ["tmux", "attach-session", "-t", f"={session}"], clean_env())
+        attach(session)
     return session

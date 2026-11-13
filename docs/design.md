@@ -47,6 +47,10 @@ resume = "codex resume --last"
 
 Panes uten agent er vanlige shell-panes og trenger ingen definisjon.
 
+Innebygde agenter: `claude`, `codex`, `gemini`, `qwen`, `opencode`, `crush`, `copilot`, `cursor` (`cursor-agent`), `goose`, `aider` og `amp`. En agent regnes som installert når programmet i `start` finnes i `PATH`. Resume-kommandoene uten `{id}` fortsetter siste sesjon i panens mappe. Amp har bare resume med tråd-ID og starter derfor en ny tråd etter restore. Hver innebygde agent testes gjennom start, avslutning og resume med en falsk binær (`tests/test_harnesses.py`).
+
+Standardagenten, som `⌥ a`, `prefix + A` og `tam new` uten agentnavn bruker, står i `~/.config/tam/config.toml` (`default_agent`). `tam setup` foreslår en standard første gang: `claude` hvis den finnes, deretter `codex`, deretter den første som er installert. Finnes flere, spør `tam setup`. `tam agent <navn>` endrer standarden, og `tam agent` lister installerte agenter. I mappevelgeren bytter `Tab` agent for akkurat denne starten.
+
 - Inneholder `resume` `{id}`, hentes ID-en fra pane-optionen `@tam_session_id`. Den settes av agentens hook.
 - Uten `{id}` kjøres `resume` som den står. For Codex betyr det siste samtale i mappen, så to Codex-panes i samme mappe gjenopptar samme samtale. Det er en kjent begrensning.
 - Uten `resume` startes agenten på nytt med `start`.
@@ -170,6 +174,7 @@ Sesjoner som ble startet før hooken var installert, finnes med `lsof` (mappe) o
 | `tam` | Restore ved behov, deretter attach |
 | `tam new [agent] [-n navn] [--split h\|v] [-- flagg]` | Ny agentpane |
 | `tam adopt` | Meld inn en ekstern eller avsluttet Claude-sesjon |
+| `tam move [sesjon]` | Flytt gjeldende vindu til en annen sesjon |
 | `tam sidebar` | Sesjoner og agenter med status, bytt med Enter |
 | `tam help` | Jukselapp med `tam`- og tmux-versjon: popup inne i tmux, ellers utskrift |
 | `tam setup` | Legg til `source`-linjen i `~/.tmux.conf`, installer Claude-hooken og sjekk avhengigheter |
@@ -185,10 +190,11 @@ Taster:
 |---|---|
 | `prefix + a`, `⌥ a` | Velg mappe i en `fzf`-popup, og start Claude der i et nytt vindu |
 | `prefix + A` | `tam new claude --split h` |
-| `prefix + h` | Jukselappen i en popup (`tam help`) |
+| `prefix + h`, `⌥ h` | Jukselappen i en popup (`tam help`) |
+| `prefix + .` | Flytt vinduet til en annen sesjon, valgt i en `fzf`-popup (`tam move`). Et nytt navn lager sesjonen. Flyttes det siste vinduet ut av en sesjon, følger klienten med. Erstatter tmux sin standard `move-window`-prompt. |
 | `prefix + s`, `⌥ s` | Sidebar: sesjoner og vinduer med agentstatus (`tam sidebar`). Erstatter tmux sin standard `choose-tree -Zs`. |
 
-`⌥ a` og `⌥ s` ligger i root-tabellen (uten prefix) og virker når terminalen sender Option som Meta (iTerm2: Left Option key = Esc+). Tastene får en beskrivelse (`-N "tam: ..."`), så de vises i `prefix + ?`. En tast med tmux sin standardbinding (`s`) erstattes. En tast brukeren selv har bundet til noe annet (f.eks. `h` for vim-navigasjon), overskrives ikke. Jukselappen viser da kommandoen i stedet for tasten.
+`⌥ a`, `⌥ s` og `⌥ h` ligger i root-tabellen (uten prefix) og virker når terminalen sender Option som Meta (iTerm2: Left Option key = Esc+). Tastene får en beskrivelse (`-N "tam: ..."`), så de vises i `prefix + ?`. En tast med tmux sin standardbinding (`s`) erstattes. En tast brukeren selv har bundet til noe annet (f.eks. `h` for vim-navigasjon), overskrives ikke. Jukselappen viser da kommandoen i stedet for tasten.
 
 Hver gang `tam` attacher, vises jukselappen som popup. Den lukkes med en vilkårlig tast. Utenfor tmux gjøres det med en engangs-hook på `client-attached`, siden klienten ikke finnes før `tam` har gjort `exec tmux attach`. Popupen tilpasses klientens størrelse (`tam help --client`), fordi tmux uten feilmelding avviser en popup som er større enn terminalen.
 

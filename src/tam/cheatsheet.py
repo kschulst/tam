@@ -27,12 +27,6 @@ def _versions() -> str:
     return f"tam {paths.tam_version()} · tmux {tmux_version}"
 
 
-def _hold(key: str) -> str:
-    """Ctrl+b -> "Ctrl and press b"."""
-    *mods, base = key.split("+")
-    return f"{' and '.join(mods)} and press {base}" if mods else f"press {base}"
-
-
 def _prefix() -> str:
     raw = global_option("prefix") if server_running() else ""
     return humanize(raw or "C-b")
@@ -58,22 +52,24 @@ def _keys(prefix: str, key: str) -> str:
 
 
 def text(closing_hint: bool = False) -> str:
+    from tam.harness import default_agent
+
     p = _prefix()
+    agent = default_agent()
     new_window = _keys(p, "a") or "tam new"
     new_split = _key(p, "A") or "tam new --split h"
-    sheet = _key(p, "h") or "tam help"
+    sheet = _keys(p, "h") or "tam help"
     rows = [
         ("Agents", None),
-        (new_window, "new Claude in a new window, pick directory"),
-        (new_split, "new Claude in a split"),
-        ("tam new codex", "another agent (see harnesses.toml)"),
+        (new_window, f"new {agent} in a new window, pick directory"),
+        (new_split, f"new {agent} in a split"),
+        ("Tab in the picker", "use another agent this time"),
+        ("tam agent <name>", "change the default agent"),
         ("tam adopt", "take over a Claude running outside tmux"),
         ("! tam adopt", "same, typed inside that Claude session"),
-        ("Agent pane after exit or reboot", None),
-        ("Enter", "resume the conversation"),
-        ("q", "close the pane"),
         ("tmux", None),
         (_keys(p, "s") or "tam sidebar", "sessions and agents, switch with Enter"),
+        (_key(p, ".") or "tam move", "move window to another session"),
         (f"{p} → w", "tmux tree of sessions and windows"),
         (f"{p} → n / p", "next / previous window"),
         (f"{p} → arrow", "move between panes"),
@@ -84,8 +80,6 @@ def text(closing_hint: bool = False) -> str:
     ]
     lines = [
         f" \033[1mtam cheat sheet\033[0m   {_versions()}",
-        "",
-        f" {p} → a  =  hold {_hold(p)}, let go, then press a",
     ]
     for left, right in rows:
         if right is None:
@@ -95,7 +89,6 @@ def text(closing_hint: bool = False) -> str:
     lines += [
         "",
         f" Open this sheet again: {sheet}",
-        " Copy text: hold ⌥ Option while selecting with the mouse",
     ]
     if closing_hint:
         lines.append(" Press any key to close.")

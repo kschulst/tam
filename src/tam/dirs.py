@@ -69,25 +69,56 @@ def resolve(query: str, selection: str) -> str | None:
     return os.path.abspath(typed) if typed and os.path.isdir(typed) else None
 
 
-def pick(current: str) -> str | None:
+def cycle_agent(state_file: str) -> str:
+    """fzf action for Tab in the picker: switch to the next installed agent."""
+    from tam.harness import installed_names
+
+    f = Path(state_file)
+    names = installed_names() or ["claude"]
+    current = f.read_text().strip() if f.exists() else names[0]
+    nxt = names[(names.index(current) + 1) % len(names)] if current in names else names[0]
+    f.write_text(nxt)
+    return f"change-prompt(new {nxt} in> )"
+
+
+def pick(current: str, agent: str) -> tuple[str, str] | None:
+    """(directory, agent), or None if cancelled. Tab switches the agent."""
+    import shlex
+
+    from tam.harness import installed_names
+
+    state_file = paths.state_dir() / f"picker-agent-{os.getpid()}"
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+    state_file.write_text(agent)
+    exe = shlex.quote(paths.tam_executable())
+    header = "Enter: use directory · type a path to use one not listed · Esc: cancel"
+    if len(installed_names()) > 1:
+        header += "\nTab: switch agent (" + ", ".join(installed_names()) + ")"
     lines = "\n".join(_short(d) for d in candidates(current))
-    proc = subprocess.run(
-        [
-            "fzf",
-            "--print-query",
-            "--no-sort",
-            "--prompt",
-            "new claude in> ",
-            "--header",
-            "Enter: use directory · type a path to use one not listed · Esc: cancel",
-        ],
-        input=lines,
-        stdout=subprocess.PIPE,
-        text=True,
-    )
+    try:
+        proc = subprocess.run(
+            [
+                "fzf",
+                "--print-query",
+                "--no-sort",
+                "--prompt",
+                f"new {agent} in> ",
+                "--header",
+                header,
+                "--bind",
+                f"tab:transform({exe} new --cycle-agent {shlex.quote(str(state_file))})",
+            ],
+            input=lines,
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        chosen_agent = state_file.read_text().strip() or agent
+    finally:
+        state_file.unlink(missing_ok=True)
     if proc.returncode not in (0, 1):  # 130: cancelled
         return None
     out = proc.stdout.split("\n")
     query = out[0] if out else ""
     selection = out[1] if len(out) > 1 else ""
-    return resolve(query, selection)
+    directory = resolve(query, selection)
+    return (directory, chosen_agent) if directory else None

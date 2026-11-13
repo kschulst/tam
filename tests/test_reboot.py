@@ -415,3 +415,36 @@ def test_adopt_from_inside_claude_uses_claude_code_session_env(env):
         return f"sid-env {env / 'b'}" in out
 
     wait_for(adopted, 10)
+
+
+def test_new_outside_tmux_creates_session_with_agent_only(env):
+    tmux("new-session", "-d", "-s", "other")
+    tam("tmux-init")
+    subprocess.run(
+        [TAM, "new", "fake", "-n", "bot"],
+        cwd=env / "c",
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        check=True,
+    )
+    assert tmux("list-windows", "-t", "c", "-F", "#{window_name}").split() == ["c:bot"]
+
+
+def test_moving_a_window_between_sessions_is_saved(env):
+    tmux("new-session", "-d", "-s", "src", "-c", str(env / "a"))
+    tmux("new-window", "-t", "src:", "-n", "mover")
+    tmux("new-session", "-d", "-s", "dst", "-c", str(env / "b"))
+    tam("tmux-init")
+    tam("snapshot")
+    tmux("move-window", "-s", "src:mover", "-t", "dst:")
+
+    def saved_in(session):
+        st = load_state(env)
+        return any(
+            w["name"] == "mover"
+            for s in st["sessions"]
+            if s["name"] == session
+            for w in s["windows"]
+        )
+
+    wait_for(lambda: saved_in("dst") and not saved_in("src"))

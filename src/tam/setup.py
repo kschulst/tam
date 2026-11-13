@@ -32,6 +32,8 @@ SNAPSHOT_HOOKS = [
     "session-renamed",
     "session-closed",
     "client-session-changed",
+    "window-linked",
+    "window-unlinked",
 ]
 
 # During shutdown, panes close before the server exits. Saving after these
@@ -60,23 +62,32 @@ def key_bindings(exe: str) -> list[list[str]]:
     new_window = [
         "run-shell",
         "-b",
-        f"{exe} new claude --popup-client '#{{client_name}}' --target '#{{pane_id}}'"
+        f"{exe} new --popup-client '#{{client_name}}' --target '#{{pane_id}}'"
         " --dir #{q:pane_current_path}",
     ]
     sidebar = ["run-shell", "-b", f"{exe} sidebar --client '#{{client_name}}'"]
     return [
-        ["prefix", "a", "tam: new Claude in a new window (pick directory)", *new_window],
-        ["root", "M-a", "tam: new Claude in a new window (pick directory)", *new_window],
+        ["prefix", "a", "tam: new agent in a new window (pick directory)", *new_window],
+        ["root", "M-a", "tam: new agent in a new window (pick directory)", *new_window],
         [
             "prefix",
             "A",
-            "tam: new Claude in a split",
+            "tam: new agent in a split",
             *here,
-            f"{exe} new claude --split h --target '#{{pane_id}}'",
+            f"{exe} new --split h --target '#{{pane_id}}'",
         ],
         ["prefix", "h", "tam: cheat sheet", *popup_command(exe)],
+        ["root", "M-h", "tam: cheat sheet", *popup_command(exe)],
         ["prefix", "s", "tam: sessions and agents", *sidebar],
         ["root", "M-s", "tam: sessions and agents", *sidebar],
+        [
+            "prefix",
+            ".",
+            "tam: move window to another session",
+            "run-shell",
+            "-b",
+            f"{exe} move --client '#{{client_name}}' --window '#{{window_id}}'",
+        ],
     ]
 
 
@@ -86,7 +97,7 @@ def popup_command(exe: str) -> list[str]:
 
 
 # tmux's own bindings for keys tam uses. tam replaces these, but not a user's binding.
-TMUX_DEFAULT_BINDINGS = {"s": "choose-tree -Zs"}
+TMUX_DEFAULT_BINDINGS = {"s": "choose-tree -Zs", ".": 'command-prompt { move-window -t "%%" }'}
 
 
 def tam_key(key: str, table: str = "prefix") -> bool | None:
@@ -102,7 +113,7 @@ def tam_key(key: str, table: str = "prefix") -> bool | None:
     if not command or (table == "prefix" and command == TMUX_DEFAULT_BINDINGS.get(key)):
         return None
     # Bindings from tam versions that did not set a note.
-    return "tam" in command and any(c in command for c in (" new claude", " help --"))
+    return "tam" in command and any(c in command for c in (" new ", " help --"))
 
 
 def _bind(table: str, key: str, note: str, command: list[str]) -> None:
@@ -251,8 +262,32 @@ def check_tools(install: bool | None = None) -> bool:
     return all(shutil.which(name) for name in REQUIRED_TOOLS)
 
 
+def choose_default_agent(interactive: bool) -> None:
+    """Report installed agents and set a default the first time."""
+    from tam import config
+    from tam.harness import installed_names, suggested_default
+
+    names = installed_names()
+    if not names:
+        print("✗ no agents found on PATH (claude, codex, ...). See tam agent.")
+        return
+    current = config.get("default_agent")
+    if current in names:
+        print(f"✓ agents: {', '.join(names)} (default: {current}, change with tam agent <name>)")
+        return
+    suggestion = suggested_default(names)
+    choice = suggestion
+    if len(names) > 1 and interactive:
+        answer = input(f"Agents found: {', '.join(names)}\nDefault agent for ⌥ a [{suggestion}]: ")
+        if answer.strip() in names:
+            choice = answer.strip()
+    config.set("default_agent", choice)
+    print(f"✓ default agent: {choice} (change with tam agent <name>)")
+
+
 def setup() -> int:
     ok = check_tools()
+    choose_default_agent(sys.stdin.isatty())
     version = _tmux_version()
     if version is None:
         return 1

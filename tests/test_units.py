@@ -36,12 +36,12 @@ def test_user_config_overrides_builtin(tmp_path, monkeypatch):
     (tmp_path / "tam").mkdir()
     (tmp_path / "tam" / "harnesses.toml").write_text(
         '[harness.claude]\nstart = "claude --permission-mode acceptEdits -n {name}"\n'
-        '[harness.aider]\nstart = "aider"\n'
+        '[harness.myagent]\nstart = "myagent"\n'
     )
     h = load()
     assert h["claude"].start.startswith("claude --permission-mode")
     assert h["claude"].resume == "claude --resume {id}"
-    assert h["aider"].resume is None
+    assert h["myagent"].resume is None
 
 
 def test_install_claude_hook_is_idempotent_and_keeps_other_hooks(tmp_path):
@@ -107,7 +107,7 @@ def test_user_bindings_are_kept_and_cheatsheet_follows(env):  # noqa: F811
     tmux("bind-key", "h", "select-pane", "-L")
     subprocess.run([TAM, "tmux-init"], check=True)
     assert "select-pane -L" in tmux("list-keys", "-T", "prefix", "h")
-    assert "tam: new Claude" in tmux("list-keys", "-N", "-T", "prefix", "a")
+    assert "tam: new agent" in tmux("list-keys", "-N", "-T", "prefix", "a")
 
     sheet = subprocess.run(
         [TAM, "help", "--print"],
@@ -117,11 +117,11 @@ def test_user_bindings_are_kept_and_cheatsheet_follows(env):  # noqa: F811
         env={k: v for k, v in os.environ.items() if k != "TMUX"},
     ).stdout
     assert "Ctrl+b → a" in sheet
-    assert "Open this sheet again: tam help" in sheet
+    assert "Open this sheet again: ⌥ h\n" in sheet + "\n"
 
     # Running tmux-init again keeps tam's own bindings.
     subprocess.run([TAM, "tmux-init"], check=True)
-    assert "tam: new Claude" in tmux("list-keys", "-N", "-T", "prefix", "a")
+    assert "tam: new agent" in tmux("list-keys", "-N", "-T", "prefix", "a")
 
 
 def test_humanize_prefix():
@@ -242,7 +242,8 @@ def test_option_shortcuts_in_root_table(env):  # noqa: F811
         env={k: v for k, v in os.environ.items() if k != "TMUX"},
     ).stdout
     assert "⌥ s · Ctrl+b → s" in sheet
-    assert "⌥ a" not in sheet  # the user's own M-a binding is kept
+    assert "Open this sheet again: ⌥ h · Ctrl+b → h" in sheet
+    assert "⌥ a ·" not in sheet  # the user's own M-a binding is kept
 
 
 def test_sidebar_close_needs_two_clicks(env, monkeypatch):  # noqa: F811
@@ -267,3 +268,52 @@ def test_sidebar_close_needs_two_clicks(env, monkeypatch):  # noqa: F811
     sidebar.click("c", "=s2:", "tam")
     sidebar.click("c", "=s2:", "tam")
     assert tmux("list-sessions", "-F", "#{session_name}").split() == ["s1"]
+
+
+def test_move_window(env, monkeypatch):  # noqa: F811
+    from tam import move
+
+    tmux("new-session", "-d", "-s", "src")
+    tmux("new-window", "-t", "src:", "-n", "mover")
+    tmux("new-session", "-d", "-s", "dst")
+    win = tmux("display-message", "-p", "-t", "src:mover", "#{window_id}").strip()
+
+    move.move("c", win, "dst")
+    assert "mover" in tmux("list-windows", "-t", "dst", "-F", "#{window_name}")
+
+    # A new destination name creates the session, without an extra empty window.
+    move.move("c", win, "fresh")
+    assert tmux("list-windows", "-t", "fresh", "-F", "#{window_name}").split() == ["mover"]
+
+    assert move.resolve("", "dst") == "dst"
+    assert move.resolve("my.new", "") == "my_new"
+    assert move.resolve("", "") is None
+
+
+def test_default_agent_detection_and_switch(tmp_path, monkeypatch):
+    from tam import config, harness
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name in ("codex", "aider"):
+        (bin_dir / name).write_text("#!/bin/sh\n")
+        (bin_dir / name).chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir))
+
+    assert harness.installed_names() == ["codex", "aider"]
+    assert harness.default_agent() == "codex"  # claude is not installed
+    config.set("default_agent", "aider")
+    assert harness.default_agent() == "aider"
+    config.set("default_agent", "claude")  # not installed: fall back
+    assert harness.default_agent() == "codex"
+
+
+def test_picker_tab_cycles_installed_agents(tmp_path, monkeypatch):
+    from tam import dirs, harness
+
+    monkeypatch.setattr(harness, "installed_names", lambda: ["claude", "codex"])
+    state = tmp_path / "agent"
+    state.write_text("claude")
+    assert dirs.cycle_agent(str(state)) == "change-prompt(new codex in> )"
+    assert dirs.cycle_agent(str(state)) == "change-prompt(new claude in> )"

@@ -114,3 +114,13 @@ def open_popup(
         str(min(height, rows)),
         " ".join(shlex.quote(a) for a in argv),
     )
+
+
+def attach(session: str) -> None:
+    """Attach the terminal to session (replaces this process), or explain without one."""
+    import sys
+
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        print(f"tam: tmux is running with session '{session}'. Run tam in a terminal to attach.")
+        return
+    os.execvpe("tmux", ["tmux", "attach-session", "-t", f"={session}"], clean_env())
