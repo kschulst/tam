@@ -5,11 +5,12 @@
 default:
     @just --list --unsorted
 
-# Install the tools for developing tam (uv, just, gh) and the project's Python environment
+# Install the tools for developing tam (uv, just, gh), the Python environment and the commit-msg hook
 [group('setup')]
 setup:
     brew bundle --file Brewfile
     uv sync
+    git config core.hooksPath .githooks
 
 # Install tam from Homebrew (kschulst/tap), or upgrade it, and run tam setup
 [group('setup')]
@@ -69,12 +70,12 @@ fmt:
     uv run ruff format src tests scripts
     uv run ruff check --fix src tests scripts
 
-# Release: `just release [patch|minor|major]` (default patch). Tags, pushes, GitHub Release, Homebrew formula
+# Release: version from the commits (feat → minor, fix → patch), or `just release minor`. Tag, GitHub Release, Homebrew formula
 [group('release')]
-release bump="patch": check
+release *bump: check
     uv run python scripts/release.py {{bump}}
 
 # Show the last release and the commits since
 [group('release')]
 release-status:
-    @uv run python scripts/release.py --dry-run patch
+    @uv run python scripts/release.py --dry-run

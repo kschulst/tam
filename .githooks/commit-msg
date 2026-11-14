@@ -1,0 +1,23 @@
+#!/bin/sh
+# Reject commit messages that are not Conventional Commits. Enabled by `just setup`
+# (git config core.hooksPath .githooks).
+subject=$(sed -n '1p' "$1")
+case "$subject" in
+    Merge\ *|Revert\ *|fixup!\ *|squash!\ *) exit 0 ;;
+esac
+if printf '%s' "$subject" | grep -Eq '^(feat|fix|perf|docs|chore|refactor|test|build|ci|style|revert)(\([a-z0-9._-]+\))?!?: .+'; then
+    exit 0
+fi
+cat >&2 <<'MSG'
+commit-msg: use Conventional Commits, e.g.
+
+  feat: ⌥ t opens a plain terminal with the directory picker
+  fix(sidebar): closing the current session no longer detaches the client
+  docs: explain why tam does not use tmux-resurrect
+  chore: update the justfile
+
+feat/fix/perf become the release notes word for word; write them for users.
+Do not mix a user-facing change with docs or tooling. See AGENTS.md.
+MSG
+echo "got: $subject" >&2
+exit 1
