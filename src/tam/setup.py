@@ -147,6 +147,9 @@ def tmux_init() -> int:
 
     for option, value in CLAUDE_SETTINGS:
         tmux("set-option", "-g", option, value)
+    # The terminal's title (iTerm tab and window) shows the session: tam:<session>.
+    tmux("set-option", "-g", "set-titles", "on")
+    tmux("set-option", "-g", "set-titles-string", "tam:#S")
     features = tmux("show-options", "-s", "terminal-features", check=False)
     if "xterm*:extkeys" not in features:
         tmux("set-option", "-as", "terminal-features", "xterm*:extkeys")

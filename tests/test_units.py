@@ -349,3 +349,11 @@ def test_term_opens_shell_window_and_split(env):  # noqa: F811
     assert all(not p.split(" ", 1)[1:] or not p.split(" ", 1)[1] for p in panes if p)
     windows = tmux("list-windows", "-t", "t", "-F", "#{window_panes}").split()
     assert windows == ["2", "1"]
+
+
+def test_terminal_title_shows_session(env):  # noqa: F811
+    tmux("new-session", "-d", "-s", "api")
+    subprocess.run([TAM, "tmux-init"], check=True)
+    assert tmux("show-options", "-gv", "set-titles").strip() == "on"
+    title = tmux("show-options", "-gv", "set-titles-string").strip()
+    assert tmux("display-message", "-p", "-t", "api:", title).strip() == "tam:api"
