@@ -4,7 +4,7 @@ import argparse
 import os
 import sys
 
-from tam import paths
+from tam import __version__, paths
 
 
 def _attach(session: str, then: list[str]) -> int:
@@ -239,6 +239,7 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         prog="tam", description="Agent sessions in tmux that survive a reboot."
     )
+    p.add_argument("--version", action="version", version=f"tam {__version__}")
     p.add_argument("--no-attach", action="store_true", help=argparse.SUPPRESS)
     p.set_defaults(func=cmd_default)
     sub = p.add_subparsers(metavar="command")
