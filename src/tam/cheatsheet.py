@@ -51,7 +51,22 @@ def _keys(prefix: str, key: str) -> str:
     return with_prefix
 
 
-def text(closing_hint: bool = False) -> str:
+def _option_note(client: str | None) -> str:
+    """Which Option key the ⌥ shortcuts need in iTerm2, when it is not the left one."""
+    from tam.setup import iterm_option_keys
+
+    session = None
+    if client:
+        session = tmux("display-message", "-p", "-c", client, "#{client_session}", check=False)
+    keys = iterm_option_keys(session=session.strip() if session else None)
+    if keys is None or keys[1]:
+        return ""
+    if keys[2]:
+        return "⌥ = the right Option key"
+    return "⌥ shortcuts need Option as Esc+ in iTerm (see tam setup)"
+
+
+def text(closing_hint: bool = False, client: str | None = None) -> str:
     from tam.harness import default_agent
 
     p = _prefix()
@@ -92,6 +107,9 @@ def text(closing_hint: bool = False) -> str:
         "",
         f" Open this sheet again: {sheet}",
     ]
+    option = _option_note(client)
+    if option:
+        lines.append(f" {option}")
     if closing_hint:
         lines.append(" Press any key to close.")
     return "\n".join(lines)
@@ -106,13 +124,13 @@ def popup(client: str | None) -> int:
 
     if not client:
         client = tmux("display-message", "-p", "#{client_name}").strip()
-    lines = text(closing_hint=True).splitlines()
+    lines = text(closing_hint=True, client=client).splitlines()
     width = max(len(_ANSI.sub("", line)) for line in lines) + 4
     open_popup(
         client,
         width,
         len(lines) + 2,
-        [paths.tam_executable(), "help", "--print", "--wait"],
+        [paths.tam_executable(), "help", "--print", "--wait", "--client", client],
         title="cheat sheet",
     )
     return 0
@@ -121,7 +139,7 @@ def popup(client: str | None) -> int:
 def show(*, print_only: bool, wait: bool, client: str | None) -> int:
     if not print_only and (client or os.environ.get("TMUX")):
         return popup(client)
-    print(text(closing_hint=wait))
+    print(text(closing_hint=wait, client=client))
     if wait:
         from tam.run import _key as read_key
 

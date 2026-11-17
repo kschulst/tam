@@ -56,7 +56,7 @@ def key_bindings(exe: str) -> list[list[str]]:
     """[table, key, note, *tmux command] for each binding tam adds.
 
     Root-table Option keys (M-a, M-s) work without the prefix when the terminal
-    sends Option as Meta (iTerm2: Profiles > Keys > Left Option key: Esc+).
+    sends Option as Meta (iTerm2: Profiles > Keys > Right Option key: Esc+).
     """
     here = ["run-shell", "-c", "#{pane_current_path}"]
     new_window = [
@@ -97,6 +97,81 @@ def key_bindings(exe: str) -> list[list[str]]:
             f"{exe} move --client '#{{client_name}}' --window '#{{window_id}}'",
         ],
     ]
+
+
+_ITERM_ESC_PLUS = 2
+
+
+def iterm_profile(session: str | None = None) -> str | None:
+    """The iTerm2 profile of the user's terminal, or None outside iTerm2 or when unknown.
+
+    Inside tmux the process environment is the server's, from whichever terminal
+    started it. The session environment has the profile of the client that last
+    attached, because tmux-init adds ITERM_PROFILE to update-environment.
+    """
+    import os
+
+    if not session and not os.environ.get("TMUX"):
+        return os.environ.get("ITERM_PROFILE")
+    target = ["-t", session] if session else []
+    out = tmux("show-environment", *target, "ITERM_PROFILE", check=False).strip()
+    name, sep, value = out.partition("=")
+    return value if sep and name == "ITERM_PROFILE" else None
+
+
+def iterm_option_keys(
+    plist: Path | None = None, profile: str | None = None, session: str | None = None
+) -> tuple[str, bool, bool] | None:
+    """(profile, left sends Esc+, right sends Esc+) for iTerm2, or None when unknown.
+
+    Without plist, the profile is the user's (see iterm_profile). With plist and
+    no profile, it is iTerm's default profile.
+
+    Only Esc+ makes tmux see M-a. A left Option key on Normal still types the
+    characters a Norwegian or German layout puts there (@, [, ], {, }, |).
+    """
+    import plistlib
+
+    if plist is None:
+        profile = iterm_profile(session)
+        if profile is None:
+            return None
+        plist = Path.home() / "Library/Preferences/com.googlecode.iterm2.plist"
+    try:
+        data = plistlib.loads(plist.read_bytes())
+    except (OSError, plistlib.InvalidFileException):
+        return None
+    profiles = data.get("New Bookmarks", [])
+    # A profile that is not in the plist (a dynamic profile, for one) is unknown.
+    if profile is None:
+        match = [p for p in profiles if p.get("Guid") == data.get("Default Bookmark Guid")]
+    else:
+        match = [p for p in profiles if p.get("Name") == profile]
+    if not match:
+        return None
+    p = match[0]
+    return (
+        p.get("Name", "?"),
+        p.get("Option Key Sends") == _ITERM_ESC_PLUS,
+        p.get("Right Option Key Sends") == _ITERM_ESC_PLUS,
+    )
+
+
+def option_key_report() -> tuple[bool, str] | None:
+    """(ok, message) about the Option shortcuts in iTerm2, or None outside iTerm2."""
+    keys = iterm_option_keys()
+    if keys is None:
+        return None
+    profile, left, right = keys
+    if left:
+        return True, f"iTerm profile {profile}: ⌥ shortcuts work with the left Option key"
+    if right:
+        return True, f"iTerm profile {profile}: ⌥ shortcuts work with the right Option key"
+    return False, (
+        f"iTerm profile {profile}: no Option key sends Esc+, so ⌥ a, ⌥ s and ⌥ h do nothing."
+        " Set Settings > Profiles > Keys > Right Option key to Esc+"
+        " (the left one keeps typing @ [ ] { })"
+    )
 
 
 def popup_command(exe: str) -> list[str]:
@@ -150,6 +225,10 @@ def tmux_init() -> int:
     # The terminal's title (iTerm tab and window) shows the session: tam:<session>.
     tmux("set-option", "-g", "set-titles", "on")
     tmux("set-option", "-g", "set-titles-string", "tam:#S")
+    # Each attaching client sets the session's ITERM_PROFILE (see iterm_profile).
+    update = tmux("show-options", "-gv", "update-environment", check=False).split()
+    if "ITERM_PROFILE" not in update:
+        tmux("set-option", "-ga", "update-environment", "ITERM_PROFILE")
     features = tmux("show-options", "-s", "terminal-features", check=False)
     if "xterm*:extkeys" not in features:
         tmux("set-option", "-as", "terminal-features", "xterm*:extkeys")
@@ -326,6 +405,10 @@ def setup() -> int:
         print(f"✓ added tam's hooks to {settings}")
     else:
         print(f"✓ {settings} has tam's hooks")
+
+    option = option_key_report()
+    if option:
+        print(f"{'✓' if option[0] else '✗'} {option[1]}")
 
     if not shutil.which("tam"):
         print("✗ tam is not on PATH. tmux and the Claude hook call `tam` by name.")

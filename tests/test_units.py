@@ -357,3 +357,44 @@ def test_terminal_title_shows_session(env):  # noqa: F811
     assert tmux("show-options", "-gv", "set-titles").strip() == "on"
     title = tmux("show-options", "-gv", "set-titles-string").strip()
     assert tmux("display-message", "-p", "-t", "api:", title).strip() == "tam:api"
+
+
+def test_iterm_option_keys(tmp_path):
+    import plistlib
+
+    from tam.setup import iterm_option_keys
+
+    plist = tmp_path / "iterm.plist"
+    plist.write_bytes(
+        plistlib.dumps(
+            {
+                "Default Bookmark Guid": "b",
+                "New Bookmarks": [
+                    {"Name": "Default", "Guid": "a", "Option Key Sends": 2},
+                    {
+                        "Name": "Mine",
+                        "Guid": "b",
+                        "Option Key Sends": 0,
+                        "Right Option Key Sends": 2,
+                    },
+                ],
+            }
+        )
+    )
+    assert iterm_option_keys(plist, "Default") == ("Default", True, False)
+    assert iterm_option_keys(plist, None) == ("Mine", False, True)  # default profile
+    assert iterm_option_keys(tmp_path / "missing.plist", None) is None
+    assert iterm_option_keys(plist, "Dynamic") is None  # not in the plist
+
+
+def test_iterm_profile_follows_the_session(env):  # noqa: F811
+    from tam.setup import iterm_profile
+
+    tmux("new-session", "-d", "-s", "api")
+    subprocess.run([TAM, "tmux-init"], check=True)
+    assert "ITERM_PROFILE" in tmux("show-options", "-gv", "update-environment").split()
+    assert iterm_profile("api") is None  # no client has attached from iTerm2
+    tmux("set-environment", "-t", "api", "ITERM_PROFILE", "Mine")
+    assert iterm_profile("api") == "Mine"
+    tmux("set-environment", "-t", "api", "-r", "ITERM_PROFILE")  # client outside iTerm2
+    assert iterm_profile("api") is None
