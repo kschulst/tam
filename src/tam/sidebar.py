@@ -8,6 +8,7 @@ pane is recognised by its start command, so it is known before its process runs.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -259,6 +260,14 @@ def card(
     name = w["name"]
     if w.get("auto_named") and name in SHELLS and path:
         name = os.path.basename(path) if path != str(Path.home()) else "~"
+    root, b = repo_branch(path)
+    found: list[dict] = []
+    pr = pr_of(root, b) if pr_of and b else None
+    if pr:
+        found.append({"url": pr["url"], "number": pr["number"], "kind": "pr"})
+    if refs_of and w["agent_pane"]:
+        found += refs_of(pane.get("pane_id", ""))
+    links_line, linked = _links_line(found)
     if w["agent_pane"]:
         status = window_status(w["statuses"])
         mark, label = STATUS[status]
@@ -266,6 +275,7 @@ def card(
         harness = pane.get("@tam_harness", "")
         if topic.lower() == harness.lower():  # the program's name, not yet a topic
             topic = ""
+        topic = _without_refs(topic, linked)
         if topic and not w.get("named"):
             name, what = topic, f"{harness} · {short_path(path, TEXT_WIDTH - len(harness) - 3)}"
         else:
@@ -279,15 +289,8 @@ def card(
         meta.append(f"{w['panes']} panes")
     if activity.isdigit():
         meta.append(ago(max(0, now - int(activity))))
-    root, b = repo_branch(path)
     if b:
         meta.append(b)
-    found: list[dict] = []
-    pr = pr_of(root, b) if pr_of and b else None
-    if pr:
-        found.append({"url": pr["url"], "number": pr["number"], "kind": "pr"})
-    if refs_of and w["agent_pane"]:
-        found += refs_of(pane.get("pane_id", ""))
     edge = f"{ACCENT}┃{RESET}" if active else " "
     name_style = f"{BOLD}{ACCENT}" if active else BOLD
     out = (
@@ -295,23 +298,58 @@ def card(
         f"{edge}  {_fit(what)}\n"
         f"{edge}  {DIM}{_fit(' · '.join(meta))}{RESET}"
     )
-    links_line = _links_line(found)
     return f"{out}\n{edge}  {links_line}" if links_line else out
 
 
-def _links_line(found: list[dict]) -> str:
-    """Up to refs.MAX distinct links as OSC 8 hyperlinks, as many as fit on a line."""
+UNDERLINE, NO_UNDERLINE = "\033[4m", "\033[24m"
+# "sak 16941", "issue #40", "PR 12": a reference in an agent's title.
+_REF_IN_TEXT = re.compile(r"\s*\b(?:sak|issue|pr|pull request)\s*#?(\d+)\b|\s*#(\d+)\b", re.I)
+
+
+def _links_line(found: list[dict]) -> tuple[str, set[int]]:
+    """The card's links line, `Issue: #40, #41  PR: #12`, and the numbers on it.
+
+    Up to refs.MAX distinct links, as many as fit; each number is an underlined
+    OSC 8 hyperlink.
+    """
     from tam.refs import MAX
 
-    parts: list[tuple[str, str]] = []
+    chosen: list[dict] = []
     for ref in found:
-        if len(parts) == MAX or any(url == ref["url"] for _, url in parts):
+        if len(chosen) == MAX or any(c["url"].lower() == ref["url"].lower() for c in chosen):
             continue
-        label = f"PR #{ref['number']}" if ref.get("kind") == "pr" else f"#{ref['number']}"
-        if len(" · ".join([p for p, _ in parts] + [label])) > TEXT_WIDTH:
+        trial = chosen + [ref]
+        if len(_links_text(trial, plain=True)) > TEXT_WIDTH:
             break
-        parts.append((label, ref["url"]))
-    return f"{DIM} · {RESET}".join(link(label, url) for label, url in parts)
+        chosen = trial
+    return _links_text(chosen), {int(c["number"]) for c in chosen}
+
+
+def _links_text(chosen: list[dict], plain: bool = False) -> str:
+    groups = []
+    for kind, label in (("issue", "Issue"), ("pr", "PR")):
+        refs = [c for c in chosen if (c.get("kind") == "pr") == (kind == "pr")]
+        if not refs:
+            continue
+        numbers = [
+            f"#{c['number']}"
+            if plain
+            else link(f"{UNDERLINE}#{c['number']}{NO_UNDERLINE}", c["url"])
+            for c in refs
+        ]
+        groups.append(f"{label}: " + ", ".join(numbers))
+    return "  ".join(groups)
+
+
+def _without_refs(topic: str, numbers: set[int]) -> str:
+    """topic without references to the issues and PRs the links line already has."""
+    if not numbers:
+        return topic
+
+    def drop(m: re.Match) -> str:
+        return "" if int(m.group(1) or m.group(2)) in numbers else m.group(0)
+
+    return _REF_IN_TEXT.sub(drop, topic).strip()
 
 
 def lines(

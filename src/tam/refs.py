@@ -95,42 +95,105 @@ def links_in(text: str) -> list[tuple[str, str, str, int]]:
     return list(seen)
 
 
-def _state(owner: str, repo: str, number: int, now: float) -> str:
-    """ "open" or "closed" (a merged PR is closed), cached; "" when gh cannot tell."""
-    key = hashlib.sha1(f"{owner}/{repo}#{number}".encode()).hexdigest()
+def _state(owner: str, repo: str, number: int, now: float) -> tuple[str, str]:
+    """(state, kind): ("open" | "closed", "pr" | "issue"), cached; ("", "") when gh cannot
+    tell, e.g. no such issue. A merged PR is closed."""
+    key = hashlib.sha1(f"{owner}/{repo}#{number}".lower().encode()).hexdigest()
     cache = _dir() / f"state-{key}.json"
     data = _read(cache)
-    if data and now - float(data.get("checked", 0)) <= STATE_TTL:
-        return str(data.get("state", ""))
-    state = ""
+    # An entry without "kind" is from an older tam and is asked again.
+    if data and "kind" in data and now - float(data.get("checked", 0)) <= STATE_TTL:
+        return str(data.get("state", "")), str(data.get("kind", ""))
+    state = kind = ""
     try:
         proc = subprocess.run(
-            ["gh", "api", f"repos/{owner}/{repo}/issues/{number}", "--jq", ".state"],
+            [
+                "gh",
+                "api",
+                f"repos/{owner}/{repo}/issues/{number}",
+                "--jq",
+                '.state + " " + (if .pull_request then "pr" else "issue" end)',
+            ],
             capture_output=True,
             text=True,
             timeout=20,
         )
         if proc.returncode == 0:
-            state = proc.stdout.strip()
+            state, _, kind = proc.stdout.strip().partition(" ")
     except (OSError, subprocess.TimeoutExpired):
         pass
-    _write(cache, {"checked": now, "state": state})
-    return state
+    _write(cache, {"checked": now, "state": state, "kind": kind})
+    return state, kind
+
+
+# A reference in an agent's title: "app-platform-k8s sak 16941", "issue 40", "repo#12".
+_TITLE_REF = re.compile(
+    r"(?:\b([\w.-]+)\s+)?\b(?:sak|issue|pr)\s*#?(\d+)\b|(?:\b([\w.-]+))?#(\d+)\b", re.I
+)
+_GITHUB_REMOTE = re.compile(r"github\.com[:/]([\w.-]+)/([\w.-]+?)(?:\.git)?/?$")
+
+
+def title_refs(title: str) -> list[tuple[str, int]]:
+    """(repo name or "", number) for each reference in an agent's title."""
+    out = []
+    for m in _TITLE_REF.finditer(title):
+        repo = m.group(1) or m.group(3) or ""
+        number = m.group(2) or m.group(4)
+        out.append((repo, int(number)))
+    return out
+
+
+def github_repos(paths_: list[str]) -> list[tuple[str, str]]:
+    """(owner, repo) of the GitHub remotes of the git repositories at these paths, in order."""
+    found: dict[tuple[str, str], None] = {}
+    for path in paths_:
+        proc = subprocess.run(
+            ["git", "-C", path, "remote", "get-url", "origin"], capture_output=True, text=True
+        )
+        m = _GITHUB_REMOTE.search(proc.stdout.strip()) if proc.returncode == 0 else None
+        if m:
+            found.setdefault((m.group(1), m.group(2)), None)
+    return list(found)
+
+
+def _candidates(repo: str, repos: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Where a title's reference may point: the named repo under each known owner, or,
+    without a name, the agent's own repository (the first of repos)."""
+    if not repo:
+        return repos[:1]
+    owners = list(dict.fromkeys(owner for owner, _ in repos))
+    return [(owner, repo) for owner in owners]
 
 
 def refresh(pane: str) -> None:
-    """Scan the pane's scrollback and write its open issues and PRs (the background part)."""
+    """Scan the pane's scrollback and title; write its open issues and PRs (in the background)."""
     from tam.tmux import tmux
 
     now = time.time()
     text = tmux("capture-pane", "-p", "-J", "-S", f"-{SCROLLBACK}", "-t", pane, check=False)
-    refs = []
-    for owner, repo, kind, number in links_in(text):
+    found = [(o, r, n) for o, r, _, n in links_in(text)]
+    title = tmux("display-message", "-p", "-t", pane, "#{pane_title}", check=False).strip()
+    references = title_refs(title)
+    if references:
+        # The agent's own repository first, then those of the other panes.
+        own = tmux("display-message", "-p", "-t", pane, "#{pane_current_path}", check=False)
+        others = tmux("list-panes", "-a", "-F", "#{pane_current_path}", check=False).split("\n")
+        repos = github_repos([own.strip(), *dict.fromkeys(p for p in others if p)])
+        for repo, number in references:
+            for owner, name in _candidates(repo, repos):
+                if _state(owner, name, number, now)[0]:  # exists there
+                    found.insert(0, (owner, name, number))
+                    break
+    refs: list[dict] = []
+    for owner, repo, number in found:
         if len(refs) == MAX:
             break
-        if _state(owner, repo, number, now) == "open":
-            path = "pull" if kind == "pr" else "issues"
-            url = f"https://github.com/{owner}/{repo}/{path}/{number}"
+        state, kind = _state(owner, repo, number, now)
+        if state != "open":
+            continue
+        url = f"https://github.com/{owner}/{repo}/{'pull' if kind == 'pr' else 'issues'}/{number}"
+        # GitHub's owner and repo names ignore case: App-platform-k8s is app-platform-k8s.
+        if all(r["url"].lower() != url.lower() for r in refs):
             refs.append({"url": url, "number": number, "kind": kind})
     _write(_pane_file(pane), {"scanned": now, "refs": refs})
     _pane_file(pane).with_suffix(".pending").unlink(missing_ok=True)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -312,7 +313,9 @@ def test_sidebar_card_links_the_pr(tmp_path):
     assert seen == [(str(repo), "feat/cards")]
     assert "feat/cards" in lines[2]
     # A fourth line with the link: Cmd+click opens it.
-    assert "\033]8;;https://example.com/pr/7\033\\PR #7\033]8;;\033\\" in lines[3]
+    assert lines[3].strip().startswith("PR: ")
+    # Underlined, so it reads as a link.
+    assert "\033]8;;https://example.com/pr/7\033\\\033[4m#7\033[24m\033]8;;\033\\" in lines[3]
     assert len(card(w, 0, {}).splitlines()) == 3  # no pr_of: no links line
 
 
@@ -342,7 +345,15 @@ def test_sidebar_agent_card_links_open_issues_and_prs_and_follows_the_topic():
     assert asked == ["%5"]
     assert "Fix the login form" in name and "app:claude" not in name  # the topic names it
     assert what.strip() == "claude · ~/git/app"
-    assert "PR #12" in links and "#40" in links and "#41" in links and "#42" not in links
+    plain = re.sub(r"\033\]8;;[^\033]*\033\\|\033\[[0-9;]*m", "", links).strip()
+    assert plain == "Issue: #40, #41  PR: #12"  # up to three, issues first
+    # A reference the links line has is dropped from the name.
+    titled = {**agent, "pane_title": "✳ App-platform-k8s sak 40"}
+    name = card({**w, "pane": titled, "agent_pane": titled}, 0, {}, None, False, refs_of)
+    assert "App-platform-k8s" in name.splitlines()[0] and "sak" not in name.splitlines()[0]
+    other = {**agent, "pane_title": "✳ App-platform-k8s sak 99"}
+    name = card({**w, "pane": other, "agent_pane": other}, 0, {}, None, False, refs_of)
+    assert "sak 99" in name.splitlines()[0]  # not linked: kept
     # Renamed with Ctrl+r: the name stays, the topic moves to the second line.
     name, what, *_ = card({**w, "named": True}, 0, {}, None, False, refs_of).splitlines()
     assert "app:claude" in name and what.strip() == "Fix the login form"
@@ -388,8 +399,12 @@ def test_refs_from_scrollback_keep_only_open_ones(env, monkeypatch):  # noqa: F8
     bin_dir = env / "bin"
     bin_dir.mkdir()
     gh = bin_dir / "gh"
-    # Issue 2 and PR 3 are open; issue 1 is closed.
-    gh.write_text('#!/bin/sh\ncase "$2" in *issues/1) echo closed;; *) echo open;; esac\n')
+    # Issue 2 and PR 3 are open; issue 1 is closed. (GitHub serves PRs under issues/ too.)
+    gh.write_text(
+        "#!/bin/sh\n"
+        'case "$2" in *issues/1) echo "closed issue";; *issues/3) echo "open pr";;'
+        ' *) echo "open issue";; esac\n'
+    )
     gh.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
     pane = tmux(
@@ -409,6 +424,42 @@ def test_refs_from_scrollback_keep_only_open_ones(env, monkeypatch):  # noqa: F8
     found = refs.lookup(pane)
     assert [(r["kind"], r["number"]) for r in found] == [("pr", 3), ("issue", 2)]  # newest first
     assert found[0]["url"] == "https://github.com/o/r/pull/3"
+
+
+def test_refs_from_the_agents_title(env, monkeypatch):  # noqa: F811
+    from tam import refs
+
+    assert refs.title_refs("App-platform-k8s sak 16941") == [("App-platform-k8s", 16941)]
+    assert refs.title_refs("Ail-unimicro PR 169 og utviklingsmiljø") == [("Ail-unimicro", 169)]
+    assert refs.title_refs("fix tam#12, then issue 7") == [("tam", 12), ("then", 7)]
+    assert refs.title_refs("INC0016411 i ServiceNow") == []
+
+    # A repo whose remote names the owner; the title names another repo of that owner.
+    repo = env / "a"
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "add", "origin", "git@github.com:acme/tools.git"],
+        check=True,
+    )
+    assert refs.github_repos([str(repo), str(env / "b")]) == [("acme", "tools")]
+    bin_dir = env / "bin"
+    bin_dir.mkdir()
+    gh = bin_dir / "gh"
+    # Only acme/platform has issue 16941.
+    gh.write_text(
+        '#!/bin/sh\ncase "$2" in repos/acme/platform/issues/16941) echo "open issue";;'
+        " *) exit 1;; esac\n"
+    )
+    gh.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+    pane = tmux("new-session", "-d", "-P", "-F", "#{pane_id}", "-c", str(repo), "sleep 100")
+    pane = pane.strip()
+    tmux("select-pane", "-t", pane, "-T", "✳ platform sak 16941")
+    refs.refresh(pane)
+    found = refs.lookup(pane)
+    assert found == [
+        {"url": "https://github.com/acme/platform/issues/16941", "number": 16941, "kind": "issue"}
+    ]
 
 
 def test_sidebar_foreground_commands_reads_ps():
