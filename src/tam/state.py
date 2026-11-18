@@ -24,6 +24,7 @@ PANE_FIELDS = [
     "window_layout",
     "window_active",
     "automatic-rename",
+    "@tam_named",
     "pane_index",
     "pane_active",
     "pane_current_path",
@@ -61,6 +62,7 @@ def capture() -> dict:
                 "layout": r["window_layout"],
                 "active": r["window_active"] == "1",
                 "auto_rename": r["automatic-rename"] == "1",
+                "named": r["@tam_named"] == "1",
                 "panes": [],
             },
         )
@@ -302,5 +304,7 @@ def _fill_window(session: str, w: dict, tam_exe: str) -> None:
         tmux("select-layout", "-t", win, w["layout"], check=False)
     if w.get("auto_rename"):
         tmux("set-option", "-w", "-t", win, "automatic-rename", "on")
+    if w.get("named"):  # renamed in the sidebar: the card keeps the name
+        tmux("set-option", "-w", "-t", win, "@tam_named", "1")
     active = next((i for i, p in enumerate(w["panes"]) if p["active"]), 0)
     tmux("select-pane", "-t", pane_ids[active])

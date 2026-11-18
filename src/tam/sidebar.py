@@ -9,9 +9,12 @@ from __future__ import annotations
 
 import os
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 from tam import paths
+from tam.pr import link
+from tam.pr import lookup as pr_lookup
 from tam.tmux import global_option, query, session_names, tmux
 
 WIDTH = 44
@@ -35,6 +38,7 @@ STATUS = {
 FIELDS = [
     "session_name",
     "window_index",
+    "window_id",
     "window_name",
     "window_active",
     "window_activity",
@@ -47,9 +51,14 @@ FIELDS = [
     "pane_start_command",
     "pane_tty",
     "automatic-rename",
+    "pane_id",
     "@tam_harness",
     "@tam_status",
+    "@tam_named",
 ]
+# Set on a window renamed with Ctrl+r: its card keeps that name instead of the
+# agent's topic. Saved in state.json.
+NAMED_OPTION = "@tam_named"
 
 # A window named after one of these, or a pane running one in front, is a shell
 # waiting for input: the card shows its directory instead.
@@ -57,6 +66,7 @@ SHELLS = {"sh", "bash", "zsh", "fish", "dash", "ksh", "tcsh", "nu"}
 
 DIM = "\033[2m"
 BOLD = "\033[1m"
+ACCENT = "\033[36m"  # the active window's bar and name
 RESET = "\033[0m"
 # Room for the text on a card: fzf's pointer, gutter and scrollbar, and the indent.
 LINE_WIDTH = WIDTH - 3
@@ -85,22 +95,28 @@ def ago(seconds: int) -> str:
 
 def branch(path: str) -> str:
     """The git branch checked out in path (short commit when detached), or ""."""
+    return repo_branch(path)[1]
+
+
+def repo_branch(path: str) -> tuple[str, str]:
+    """(the work tree's top directory, its branch) for path, or ("", "") outside git."""
     if not path:
-        return ""
+        return "", ""
     for d in (Path(path), *Path(path).parents):
         git = d / ".git"
-        if git.is_file():  # a worktree or submodule: "gitdir: <path>"
-            text = git.read_text().strip()
-            if not text.startswith("gitdir:"):
-                return ""
-            git = (d / text.removeprefix("gitdir:").strip()).resolve()
-        if git.is_dir():
-            try:
+        try:
+            if git.is_file():  # a worktree or submodule: "gitdir: <path>"
+                text = git.read_text().strip()
+                if not text.startswith("gitdir:"):
+                    return "", ""
+                git = (d / text.removeprefix("gitdir:").strip()).resolve()
+            if git.is_dir():
                 head = (git / "HEAD").read_text().strip()
-            except OSError:
-                return ""
-            return head.removeprefix("ref: refs/heads/") if head.startswith("ref:") else head[:7]
-    return ""
+                ref = head.removeprefix("ref: refs/heads/") if head.startswith("ref:") else head[:7]
+                return str(d), ref
+        except OSError:
+            return "", ""
+    return "", ""
 
 
 def title(raw: str, host: str = "") -> str:
@@ -159,12 +175,33 @@ def _program(args: str) -> str:
     return f"{name} {rest}".strip()
 
 
+def _agent_programs() -> dict[str, str]:
+    from tam.harness import programs
+
+    global _PROGRAMS
+    if _PROGRAMS is None:
+        _PROGRAMS = programs()
+    return _PROGRAMS
+
+
+_PROGRAMS: dict[str, str] | None = None
+
+
 def _windows(rows: list[dict[str, str]]) -> dict[str, dict[str, dict]]:
-    """session -> window index -> window, in tmux order."""
+    """session -> window index -> window, in tmux order.
+
+    A pane counts as an agent when tam started it (@tam_harness), or when a known
+    agent's program runs in it: a `claude` started by hand gets an agent's card
+    too, with the status its hooks set.
+    """
     sessions: dict[str, dict[str, dict]] = {}
     for r in rows:
         if is_sidebar(r.get("pane_start_command", "")):
             continue
+        if not r.get("@tam_harness"):
+            found = _agent_programs().get(r.get("pane_current_command", ""))
+            if found:
+                r = {**r, "@tam_harness": found}
         windows = sessions.setdefault(r["session_name"], {})
         w = windows.setdefault(
             r["window_index"],
@@ -175,6 +212,8 @@ def _windows(rows: list[dict[str, str]]) -> dict[str, dict[str, dict]]:
                 "pane": None,
                 "agent_pane": None,
                 "panes": 0,
+                "id": r.get("window_id", ""),
+                "named": r.get(NAMED_OPTION) == "1",
             },
         )
         w["panes"] += 1
@@ -195,8 +234,23 @@ def _terminal_what(pane: dict[str, str], commands: dict[str, str]) -> str:
     return command
 
 
-def card(w: dict, now: int, commands: dict[str, str] | None = None) -> str:
-    """Three lines for a window: name, what runs in it, status · panes · age · branch.
+def card(
+    w: dict,
+    now: int,
+    commands: dict[str, str] | None = None,
+    pr_of: Callable[[str, str], dict | None] | None = None,
+    active: bool = False,
+    refs_of: Callable[[str], list[dict]] | None = None,
+) -> str:
+    """A window's card: name, what runs in it, status · panes · age · branch, and links.
+
+    An agent's card is named after the topic its title gives (Claude keeps it up to
+    date), unless the window was renamed with Ctrl+r. The links line lists up to
+    refs.MAX open PRs and issues: the branch's PR (pr_of, i.e. pr.lookup), then
+    the ones the agent has shown (refs_of, i.e. refs.lookup). Cmd+click opens one.
+
+    The active window (the one the sidebar is in) has a coloured bar and name; the
+    marked line, which the arrow keys move, is fzf's highlighted line.
 
     commands is foreground_commands(); without it, terminals show tmux's program name.
     """
@@ -208,8 +262,14 @@ def card(w: dict, now: int, commands: dict[str, str] | None = None) -> str:
     if w["agent_pane"]:
         status = window_status(w["statuses"])
         mark, label = STATUS[status]
-        raw = pane.get("pane_title", "")
-        what = title(raw, pane.get("host_short", "")) or pane.get("@tam_harness", "")
+        topic = title(pane.get("pane_title", ""), pane.get("host_short", ""))
+        harness = pane.get("@tam_harness", "")
+        if topic.lower() == harness.lower():  # the program's name, not yet a topic
+            topic = ""
+        if topic and not w.get("named"):
+            name, what = topic, f"{harness} · {short_path(path, TEXT_WIDTH - len(harness) - 3)}"
+        else:
+            what = topic or harness
     else:
         mark, label = f"{DIM}›{RESET}", "terminal"
         what = _terminal_what(pane, commands or {})
@@ -219,14 +279,39 @@ def card(w: dict, now: int, commands: dict[str, str] | None = None) -> str:
         meta.append(f"{w['panes']} panes")
     if activity.isdigit():
         meta.append(ago(max(0, now - int(activity))))
-    b = branch(path)
+    root, b = repo_branch(path)
     if b:
         meta.append(b)
-    return (
-        f" {mark} {BOLD}{_fit(name)}{RESET}\n"
-        f"   {_fit(what)}\n"
-        f"   {DIM}{_fit(' · '.join(meta))}{RESET}"
+    found: list[dict] = []
+    pr = pr_of(root, b) if pr_of and b else None
+    if pr:
+        found.append({"url": pr["url"], "number": pr["number"], "kind": "pr"})
+    if refs_of and w["agent_pane"]:
+        found += refs_of(pane.get("pane_id", ""))
+    edge = f"{ACCENT}┃{RESET}" if active else " "
+    name_style = f"{BOLD}{ACCENT}" if active else BOLD
+    out = (
+        f"{edge}{mark} {name_style}{_fit(name)}{RESET}\n"
+        f"{edge}  {_fit(what)}\n"
+        f"{edge}  {DIM}{_fit(' · '.join(meta))}{RESET}"
     )
+    links_line = _links_line(found)
+    return f"{out}\n{edge}  {links_line}" if links_line else out
+
+
+def _links_line(found: list[dict]) -> str:
+    """Up to refs.MAX distinct links as OSC 8 hyperlinks, as many as fit on a line."""
+    from tam.refs import MAX
+
+    parts: list[tuple[str, str]] = []
+    for ref in found:
+        if len(parts) == MAX or any(url == ref["url"] for _, url in parts):
+            continue
+        label = f"PR #{ref['number']}" if ref.get("kind") == "pr" else f"#{ref['number']}"
+        if len(" · ".join([p for p, _ in parts] + [label])) > TEXT_WIDTH:
+            break
+        parts.append((label, ref["url"]))
+    return f"{DIM} · {RESET}".join(link(label, url) for label, url in parts)
 
 
 def lines(
@@ -234,20 +319,34 @@ def lines(
     current: tuple[str, str],
     now: int | None = None,
     commands: dict[str, str] | None = None,
+    pr_of: Callable[[str, str], dict | None] | None = None,
+    refs_of: Callable[[str], list[dict]] | None = None,
 ) -> tuple[list[str], int]:
-    """fzf items (`target<TAB>text`, the text on several lines) and the current window's index."""
+    """fzf items (`target<TAB>text`, the text on several lines) and the current window's index.
+
+    commands, pr_of and refs_of default to foreground_commands(), pr.lookup and
+    refs.lookup.
+    """
     import time
+
+    from tam import refs
 
     now = int(time.time()) if now is None else now
     commands = foreground_commands() if commands is None else commands
+    pr_of = pr_lookup if pr_of is None else pr_of
+    refs_of = refs.lookup if refs_of is None else refs_of
     out: list[str] = []
     selected = 0
     for session, windows in _windows(rows).items():
         out.append(f"={session}:\t{session_line(session)}")
         for index, w in sorted(windows.items(), key=lambda kv: int(kv[0])):
-            if (session, index) == current:
+            active = (session, index) == current
+            if active:
                 selected = len(out)
-            out.append(f"={session}:{index}\t{card(w, now, commands)}")
+            # The window id stays right when windows are added or moved; a list
+            # reloaded every few seconds can be older than the indexes.
+            target = w.get("id") or f"={session}:{index}"
+            out.append(f"{target}\t{card(w, now, commands, pr_of, active, refs_of)}")
     return out, selected
 
 
@@ -273,15 +372,16 @@ def header(rows: list[dict[str, str]]) -> str:
 
 
 def line_click(client: str, target: str, exe: str) -> str:
-    """fzf actions for a click on a line: a session's line opens a terminal.
+    """fzf actions for a click on a line (fzf has already moved the cursor there).
 
-    fzf has already moved the cursor to the clicked line; a window's line needs
-    nothing more.
+    A window's card goes to the window. A session's line only moves the cursor:
+    its + terminal is handled by mouse(), which knows where on the line the click
+    was. While renaming, a click only moves the cursor.
     """
-    if not target.endswith(":"):
+    if rename_mode() or target.endswith(":"):
         return ""
-    terminal_in_session(client, target[1:-1])
-    return _reload(client, exe)
+    _go(client, target)
+    return ""
 
 
 def terminal_in_session(client: str, session: str) -> None:
@@ -396,6 +496,26 @@ def _back_to_window() -> None:
         tmux("select-pane", "-R", "-t", pane, check=False)
 
 
+def _go(client: str, target: str) -> None:
+    """Switch to target; the sidebar's own window moves focus back into that window."""
+    if pane_mode() and _is_own_window(target):
+        _back_to_window()
+    else:
+        tmux("switch-client", *_client(client), "-t", target, check=False)
+
+
+def _is_own_window(target: str) -> bool:
+    """True if target (a window id, or =session:index) is the sidebar pane's window."""
+    own = tmux(
+        "display-message",
+        "-p",
+        "-t",
+        os.environ["TMUX_PANE"],
+        "#{window_id}\t=#{session_name}:#{window_index}",
+    )
+    return target in own.strip().split("\t")
+
+
 def enter(client: str, target: str, name: str, exe: str) -> str:
     """fzf actions for Enter: rename in rename mode, otherwise go to the line.
 
@@ -405,11 +525,7 @@ def enter(client: str, target: str, name: str, exe: str) -> str:
         if not pane_mode():
             return "accept"
         if target:
-            session, _, index = target[1:].partition(":")
-            if (session, index) == _current(client):
-                _back_to_window()
-            else:
-                tmux("switch-client", *_client(client), "-t", target, check=False)
+            _go(client, target)
         return "clear-query"
     name = name.strip()
     if name and target:
@@ -417,6 +533,7 @@ def enter(client: str, target: str, name: str, exe: str) -> str:
             tmux("rename-session", "-t", target[:-1], "--", name, check=False)
         else:
             tmux("rename-window", "-t", target, "--", name, check=False)
+            tmux("set-option", "-w", "-t", target, NAMED_OPTION, "1", check=False)
     return f"{_SEARCH_MODE}+{_reload(client, exe)}"
 
 
@@ -430,14 +547,21 @@ def escape() -> str:
     return "abort"
 
 
-# Closing from the sidebar: the footer is a button that closes the focused line.
-# The first click (or Ctrl+x) arms it, the second closes. Moving to another line
-# disarms it. The armed target is kept in a file because each fzf action runs a
-# new process.
+# Closing from the sidebar: Ctrl+x on the focused line arms, a second Ctrl+x
+# closes. Moving to another line disarms it. The armed target is kept in a file
+# because each fzf action runs a new process. Outside the sidebar, ⌥ w closes
+# the current window (tmux's confirm-before, see setup.key_bindings).
 
 
 def _armed_file() -> Path:
     return paths.state_dir() / "sidebar-armed"
+
+
+def _armed() -> str:
+    try:
+        return _armed_file().read_text()
+    except OSError:
+        return ""
 
 
 def _describe(target: str) -> str:
@@ -449,18 +573,19 @@ def _describe(target: str) -> str:
 
 
 def footer(target: str) -> str:
-    """Footer text for the focused line. Also disarms the button."""
-    _armed_file().unlink(missing_ok=True)
-    return f"[ ✕ close {_describe(target)} ]  (or Ctrl+x)"
+    """Footer text for the focused line (empty). Moving to another line disarms closing."""
+    if _armed() != target:
+        _armed_file().unlink(missing_ok=True)
+    return " "
 
 
 def click(client: str, target: str, exe: str) -> str:
-    """fzf actions for a click on the close button."""
+    """fzf actions for Ctrl+x: arm on the first, close on the second."""
     armed = _armed_file()
-    if not armed.exists() or armed.read_text() != target:
+    if _armed() != target:
         armed.parent.mkdir(parents=True, exist_ok=True)
         armed.write_text(target)
-        return f"change-footer([ ✕ click again to close {_describe(target)} ])"
+        return f"change-footer([ ✕ Ctrl+x again to close {_describe(target)} ])"
     armed.unlink()
     close(client, target)
     return _reload(client, exe)
@@ -497,7 +622,12 @@ def fzf_args(exe: str, selected: int, header_text: str) -> list[str]:
 
     close_action = f"transform({exe} sidebar --click {{1}})"
     enter_action = f"transform({exe} sidebar --enter {{1}} --name={{q}})"
-    refresh = f"{_VISIBLE} && echo {shlex.quote(_reload('', exe))} || true"
+    # In the background, so fzf does not block clicks and keys while the list is
+    # built; it then reloads only when something changed (see tick).
+    refresh = f"{_VISIBLE} && {exe} sidebar --tick || true"
+    # The footer only says something while Ctrl+x is armed; no Python otherwise.
+    armed = shlex.quote(str(_armed_file()))
+    footer_text = f"[ -e {armed} ] && {exe} sidebar --footer {{1}} || echo ' '"
     return [
         "fzf",
         "--ansi",
@@ -533,9 +663,7 @@ def fzf_args(exe: str, selected: int, header_text: str) -> list[str]:
         "--bind",
         f"load:pos({selected + 1})+unbind(load)",
         "--bind",
-        f"focus:transform-footer({exe} sidebar --footer {{1}})",
-        "--bind",
-        f"click-footer:{close_action}",
+        f"focus:bg-transform-footer:{footer_text}",
         "--bind",
         f"left-click:transform({exe} sidebar --line-click {{1}})",
         "--bind",
@@ -552,7 +680,7 @@ def fzf_args(exe: str, selected: int, header_text: str) -> list[str]:
         "--bind",
         "ctrl-c:ignore,ctrl-g:ignore,ctrl-q:ignore",
         "--bind",
-        f"every({REFRESH_SECONDS}):transform:{refresh}",
+        f"every({REFRESH_SECONDS}):bg-transform:{refresh}",
     ]
 
 
@@ -577,8 +705,151 @@ def run_pane() -> int:
     rows = pane_rows()
     items, selected = lines(rows, _current(""))
     exe = shlex.quote(paths.tam_executable())
-    subprocess.run(fzf_args(exe, selected, header(rows)), input="\0".join(items), text=True)
+    args = fzf_args(exe, selected, header(rows)) + [f"--listen={socket_path(pane)}"]
+    subprocess.run(args, input="\0".join(items), text=True)
+    for f in _tick_files(pane):
+        f.unlink(missing_ok=True)
     return 0
+
+
+def _tick_files(pane: str) -> tuple[Path, Path]:
+    """Where tick keeps the last list and header it gave this sidebar."""
+    d = paths.state_dir() / "sidebar"
+    name = pane.lstrip("%")
+    return d / f"{name}.list", d / f"{name}.header"
+
+
+def tick() -> str:
+    """fzf actions for the refresh tick: a reload only when the list or header changed.
+
+    Runs as fzf's bg-transform, so building the list does not block the sidebar.
+    The reload itself reads the list from a file and takes a few milliseconds.
+    """
+    import shlex
+
+    rows = pane_rows()
+    items, _ = lines(rows, _current(""))
+    text, head = "\0".join(items), header(rows)
+    list_file, header_file = _tick_files(os.environ["TMUX_PANE"])
+    try:
+        if list_file.read_text() == text and header_file.read_text() == head:
+            return ""
+    except OSError:
+        pass
+    list_file.parent.mkdir(parents=True, exist_ok=True)
+    for f, content in ((list_file, text), (header_file, head)):
+        tmp = f.with_name(f"{f.name}.{os.getpid()}")
+        tmp.write_text(content)
+        os.replace(tmp, f)
+    lf, hf = shlex.quote(str(list_file)), shlex.quote(str(header_file))
+    return f"reload-sync(cat {lf})+transform-header(cat {hf})"
+
+
+def socket_path(pane: str) -> str:
+    """Where a sidebar's fzf listens: next to tmux's socket, in a directory only the
+    user can open, and short enough for a unix socket path."""
+    tmux_socket = tmux("display-message", "-p", "#{socket_path}").strip()
+    return os.path.join(os.path.dirname(tmux_socket), f"tam-sidebar-{pane.lstrip('%')}.sock")
+
+
+def refocus(window: str) -> None:
+    """Move the cursor of window's sidebar to the window's own card.
+
+    Runs from a tmux hook when a window becomes the current one. Each window has
+    its own sidebar, which otherwise still points at the line it was on.
+    """
+    sidebars = _by_window().get(window, {}).get("sidebars", [])
+    if not sidebars:
+        return
+    where = tmux("display-message", "-p", "-t", window, "#{session_name}\t#{window_index}")
+    session, index = where.strip().split("\t")
+    _, selected = lines(pane_rows(), (session, index), commands={}, pr_of=lambda *_: None)
+    _post(socket_path(sidebars[0]["pane_id"]), f"clear-query+pos({selected + 1})")
+
+
+def _post(sock: str, actions: str) -> None:
+    """Send fzf actions to an fzf listening on the unix socket sock (--listen)."""
+    _request(sock, "POST", actions)
+
+
+def marked(pane: str) -> str:
+    """The target of the line marked (under the cursor) in a sidebar pane, or ""."""
+    import json
+
+    try:
+        state = json.loads(_request(socket_path(pane), "GET", "") or "{}")
+        return str(state["current"]["text"]).split("\t", 1)[0]
+    except (ValueError, KeyError, TypeError):
+        return ""
+
+
+def _request(sock: str, method: str, body: str) -> str:
+    """One HTTP request to fzf's --listen unix socket. "" when nothing listens there."""
+    import http.client
+    import socket
+
+    class Connection(http.client.HTTPConnection):
+        def connect(self) -> None:
+            self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            self.sock.settimeout(2)
+            self.sock.connect(sock)
+
+    conn = Connection("localhost")
+    path = "/?limit=0" if method == "GET" else "/"
+    try:
+        conn.request(method, path, body=body.encode() if body else None)
+        return conn.getresponse().read().decode()
+    except OSError:
+        return ""  # the sidebar has not started listening yet, or has just closed
+    finally:
+        conn.close()
+
+
+def mouse(pane: str, word: str, line: str) -> None:
+    """A click in a sidebar pane, also passed on to fzf: + terminal opens a terminal.
+
+    tmux gives the word and the line under the mouse; fzf, which moves its cursor
+    to the clicked line, gives which session that line belongs to.
+    """
+    import time
+
+    if word not in ("+", "terminal") or TERMINAL_BUTTON not in line:
+        return
+    # The line as shown: fzf's pointer and gutter, the session's name, the button.
+    name = line.split(TERMINAL_BUTTON)[0].strip().lstrip("▌").strip()
+    for _ in range(20):  # until fzf has handled the click
+        target = marked(pane)
+        if target.endswith(":") and target[1:-1].upper().startswith(name.rstrip("…")):
+            terminal_in_session("", target[1:-1])
+            return
+        time.sleep(0.05)
+
+
+def close_marked(client: str) -> None:
+    """⌥ w: ask, then close the line marked in the client's sidebar.
+
+    Without a sidebar (hidden) or a marked line, the client's current window.
+    """
+    import shlex
+
+    window = tmux("display-message", "-p", *_client(client), "#{window_id}").strip()
+    sidebars = _by_window().get(window, {}).get("sidebars", [])
+    target = marked(sidebars[0]["pane_id"]) if sidebars else ""
+    if not target.startswith(("=", "@")):  # a session's line, or a window's
+        session, index = _current(client)
+        target = f"={session}:{index}"
+    exe = shlex.quote(paths.tam_executable())
+    prompt = f"close {_describe(target)}? (y/n)".replace("#", "##")
+    run = f"{exe} sidebar --close {shlex.quote(target)}"
+    if client:
+        run += f" --client {shlex.quote(client)}"
+    tmux(
+        "confirm-before",
+        *(["-t", client] if client else []),
+        "-p",
+        prompt,
+        f"run-shell -b {shlex.quote(run)}",
+    )
 
 
 # Showing and hiding
@@ -641,6 +912,18 @@ def ensure() -> None:
                 )
             elif keep[0]["pane_width"] != str(WIDTH):
                 tmux("resize-pane", "-t", keep[0]["pane_id"], "-x", str(WIDTH), check=False)
+
+
+def restart() -> None:
+    """Restart every sidebar's process, so a new tam's fzf bindings take effect.
+
+    fzf gets its bindings when it starts; a sidebar started by an older tam keeps
+    the old ones. respawn-pane keeps the pane's place and size.
+    """
+    command = f"{paths.tam_executable()} {PANE_COMMAND}"
+    for w in _by_window().values():
+        for s in w["sidebars"]:
+            tmux("respawn-pane", "-k", "-t", s["pane_id"], command, check=False)
 
 
 def toggle() -> None:

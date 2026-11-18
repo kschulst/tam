@@ -62,6 +62,16 @@ def installed(h: Harness) -> bool:
     return bool(parts) and shutil.which(os.path.expanduser(parts[0])) is not None
 
 
+def programs() -> dict[str, str]:
+    """Program name (as tmux reports a pane's command) -> agent name, for every agent."""
+    out: dict[str, str] = {}
+    for name, h in load().items():
+        parts = shlex.split(h.start)
+        if parts:
+            out.setdefault(os.path.basename(os.path.expanduser(parts[0])), name)
+    return out
+
+
 def installed_names() -> list[str]:
     return [name for name, h in load().items() if installed(h)]
 

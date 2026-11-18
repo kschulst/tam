@@ -51,14 +51,14 @@ def _keys(prefix: str, key: str) -> str:
     return with_prefix
 
 
-def _quit_keys(prefix: str) -> str:
-    """⌥ q when tam owns it, plus tmux's own prefix + d."""
+def _option_or_tmux(prefix: str, option: str, tmux_key: str) -> str:
+    """⌥ <option> when tam owns it, plus tmux's own prefix key for the same thing."""
     from tam.setup import tam_key
 
-    detach = f"{prefix} → d"
-    if server_running() and tam_key("M-q", "root"):
-        return f"⌥ q · {detach}"
-    return detach
+    own = f"{prefix} → {tmux_key}"
+    if server_running() and tam_key(f"M-{option}", "root"):
+        return f"⌥ {option} · {own}"
+    return own
 
 
 def _option_note(client: str | None) -> str:
@@ -95,7 +95,8 @@ def text(closing_hint: bool = False, client: str | None = None) -> str:
         ("tam adopt", "take over an agent running outside tmux"),
         ("! tam adopt", "same, typed inside that agent's session"),
         ("tmux", None),
-        (_quit_keys(p), "quit tam (agents keep running; tam attaches again)"),
+        (_option_or_tmux(p, "q", "d"), "quit tam (agents keep running; tam attaches again)"),
+        (_option_or_tmux(p, "w", "&"), "close the marked window (asks first)"),
         (_keys(p, "s") or "tam sidebar", "sidebar: focus it (again to go back), Enter switches"),
         (_keys(p, "S") or "tam sidebar --toggle", "show or hide the sidebar"),
         (_key(p, ".") or "tam move", "move window to another session"),

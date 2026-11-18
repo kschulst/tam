@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from tam.harness import Harness, load
@@ -222,7 +223,8 @@ def test_sidebar_lines():
     cards = [item for item, t in zip(out, targets, strict=True) if not t.endswith(":")]
     assert [len(c.splitlines()) for c in cards] == [3, 3, 3]
     name, what, meta = out[1].split("\t", 1)[1].splitlines()
-    assert "api:claude" in name and what.strip() == "Fix the login form"
+    # An agent's card is named after its topic; the agent is on the second line.
+    assert "Fix the login form" in name and what.strip().startswith("claude")
     assert "waiting" in meta and "2 panes" in meta and "20m ago" in meta
     assert "terminal" in out[2] and "vim" in out[2] and "panes" not in out[2]
     assert "running" in out[4]
@@ -249,6 +251,164 @@ def test_sidebar_terminal_card_names_directory_and_command():
 
     assert short_path(f"{home}/a/b/c", 40) == "~/a/b/c"
     assert short_path("/very/long/path/to/some/project/dir", 20) == "…/some/project/dir"
+
+
+def test_pr_refresh_and_lookup_use_a_cache(tmp_path, monkeypatch):
+    from tam import pr
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    gh = bin_dir / "gh"
+    gh.write_text(
+        "#!/bin/sh\n"
+        'echo "$@" >> "$(dirname "$0")/calls"\n'
+        'echo \'[{"number": 42, "url": "https://example.com/pr/42", "isDraft": false}]\'\n'
+    )
+    gh.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+    started = []
+    monkeypatch.setattr(pr, "_refresh_in_background", lambda *a: started.append(a[:2]))
+
+    assert pr.lookup("/repo", "main") is None and not started  # no PRs from main
+    assert pr.lookup("/repo", "feat/x") is None  # nothing cached: a refresh starts
+    assert started == [("/repo", "feat/x")]
+    pr.refresh(str(tmp_path), "feat/x")  # what the background process runs
+    assert "--head feat/x --state open" in (bin_dir / "calls").read_text()
+    started.clear()
+    found = pr.lookup(str(tmp_path), "feat/x")
+    assert found == {"number": 42, "url": "https://example.com/pr/42", "draft": False}
+    assert not started  # fresh cache: no new refresh
+    pr.lookup(str(tmp_path), "feat/x", now=time.time() + pr.TTL + 1)
+    assert started == [(str(tmp_path), "feat/x")]  # stale: refresh, still answers
+
+    gh.write_text("#!/bin/sh\nexit 1\n")  # gh fails: cached as no PR
+    pr.refresh(str(tmp_path), "feat/y")
+    assert pr.lookup(str(tmp_path), "feat/y") is None
+
+
+def test_pr_lookup_without_gh(tmp_path, monkeypatch):
+    from tam import pr
+
+    monkeypatch.setenv("PATH", str(tmp_path))
+    assert pr.lookup("/repo", "feat/x") is None
+
+
+def test_sidebar_card_links_the_pr(tmp_path):
+    from tam.sidebar import card
+
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    (repo / ".git" / "HEAD").write_text("ref: refs/heads/feat/cards\n")
+    pane = {"pane_current_path": str(repo), "pane_current_command": "vim"}
+    w = {"name": "w", "statuses": [], "pane": pane, "agent_pane": None}
+    seen = []
+
+    def pr_of(root, branch):
+        seen.append((root, branch))
+        return {"number": 7, "url": "https://example.com/pr/7", "draft": False}
+
+    lines = card(w, 0, {}, pr_of).splitlines()
+    assert seen == [(str(repo), "feat/cards")]
+    assert "feat/cards" in lines[2]
+    # A fourth line with the link: Cmd+click opens it.
+    assert "\033]8;;https://example.com/pr/7\033\\PR #7\033]8;;\033\\" in lines[3]
+    assert len(card(w, 0, {}).splitlines()) == 3  # no pr_of: no links line
+
+
+def test_sidebar_agent_card_links_open_issues_and_prs_and_follows_the_topic():
+    from tam.sidebar import card
+
+    agent = {
+        "pane_id": "%5",
+        "pane_title": "✳ Fix the login form",
+        "pane_current_path": str(Path.home() / "git" / "app"),
+        "@tam_harness": "claude",
+    }
+    w = {"name": "app:claude", "statuses": ["waiting"], "pane": agent, "agent_pane": agent}
+    refs = [
+        {"url": "https://github.com/o/r/pull/12", "number": 12, "kind": "pr"},
+        {"url": "https://github.com/o/r/issues/40", "number": 40, "kind": "issue"},
+        {"url": "https://github.com/o/r/issues/41", "number": 41, "kind": "issue"},
+        {"url": "https://github.com/o/r/issues/42", "number": 42, "kind": "issue"},
+    ]
+    asked = []
+
+    def refs_of(pane):
+        asked.append(pane)
+        return refs
+
+    name, what, _, links = card(w, 0, {}, None, False, refs_of).splitlines()
+    assert asked == ["%5"]
+    assert "Fix the login form" in name and "app:claude" not in name  # the topic names it
+    assert what.strip() == "claude · ~/git/app"
+    assert "PR #12" in links and "#40" in links and "#41" in links and "#42" not in links
+    # Renamed with Ctrl+r: the name stays, the topic moves to the second line.
+    name, what, *_ = card({**w, "named": True}, 0, {}, None, False, refs_of).splitlines()
+    assert "app:claude" in name and what.strip() == "Fix the login form"
+    # A title that is only the program's name is not a topic yet.
+    fresh = {**agent, "pane_title": "claude"}
+    name, *_ = card({**w, "pane": fresh, "agent_pane": fresh}, 0, {}).splitlines()
+    assert "app:claude" in name
+
+
+def test_sidebar_a_claude_started_by_hand_gets_an_agent_card(monkeypatch):
+    from tam import sidebar
+
+    monkeypatch.setattr(sidebar, "_PROGRAMS", {"claude": "claude"})
+    rows = [
+        {
+            "session_name": "inc",
+            "window_index": "2",
+            "window_name": "claude",
+            "pane_current_command": "claude",
+            "pane_title": "INC0016411 i ServiceNow",
+            "pane_current_path": str(Path.home() / "kenneth" / "inc"),
+            "@tam_harness": "",
+            "@tam_status": "waiting",
+        }
+    ]
+    out, _ = sidebar.lines(rows, ("inc", "9"), commands={}, pr_of=lambda *_: None)
+    name, what, meta = out[1].split("\t", 1)[1].splitlines()
+    assert "INC0016411 i ServiceNow" in name
+    assert what.strip() == "claude · ~/kenneth/inc"
+    assert "waiting" in meta and "terminal" not in meta
+
+
+def test_harness_programs_map_commands_to_agents():
+    from tam.harness import programs
+
+    found = programs()
+    assert found["claude"] == "claude" and found["cursor-agent"] == "cursor"
+
+
+def test_refs_from_scrollback_keep_only_open_ones(env, monkeypatch):  # noqa: F811
+    from tam import refs
+
+    bin_dir = env / "bin"
+    bin_dir.mkdir()
+    gh = bin_dir / "gh"
+    # Issue 2 and PR 3 are open; issue 1 is closed.
+    gh.write_text('#!/bin/sh\ncase "$2" in *issues/1) echo closed;; *) echo open;; esac\n')
+    gh.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+    pane = tmux(
+        "new-session",
+        "-d",
+        "-P",
+        "-F",
+        "#{pane_id}",
+        "printf 'see https://github.com/o/r/issues/1 and https://github.com/o/r/issues/2\\n"
+        "opened https://github.com/o/r/pull/3\\n'; sleep 100",
+    ).strip()
+    wait_for(lambda: "pull/3" in tmux("capture-pane", "-p", "-t", pane))
+    started = []
+    monkeypatch.setattr(refs, "_refresh_in_background", lambda *a: started.append(a[0]))
+    assert refs.lookup(pane) == [] and started == [pane]  # nothing cached yet
+    refs.refresh(pane)
+    found = refs.lookup(pane)
+    assert [(r["kind"], r["number"]) for r in found] == [("pr", 3), ("issue", 2)]  # newest first
+    assert found[0]["url"] == "https://github.com/o/r/pull/3"
 
 
 def test_sidebar_foreground_commands_reads_ps():
@@ -372,7 +532,7 @@ def test_sidebar_rename(env, monkeypatch):  # noqa: F811
     assert "enable-search" in sidebar.escape()
 
 
-def test_sidebar_session_line_opens_a_terminal_where_the_agent_is(env):  # noqa: F811
+def test_sidebar_plus_terminal_opens_a_terminal_where_the_agent_is(env, monkeypatch):  # noqa: F811
     from tam import sidebar
 
     # Window 0: a shell in a (current). Window 1: an agent in b. Window 2: a shell in c.
@@ -380,10 +540,20 @@ def test_sidebar_session_line_opens_a_terminal_where_the_agent_is(env):  # noqa:
     agent = tmux("new-window", "-d", "-t", "s1:", "-c", str(env / "b"), "-P", "-F", "#{pane_id}")
     tmux("set-option", "-p", "-t", agent.strip(), "@tam_harness", "fake")
     tmux("new-window", "-d", "-t", "s1:", "-c", str(env / "c"))
-    assert sidebar.session_line("s1").endswith(sidebar.TERMINAL_BUTTON)
+    line = sidebar.session_line("s1")
+    assert line.endswith(sidebar.TERMINAL_BUTTON)
+    shown = "S1" + line.split("S1", 1)[1].replace(sidebar.RESET, "")  # as tmux has it
 
-    assert sidebar.line_click("", "=s1:0", "tam") == ""  # a window's line: just focus
-    assert sidebar.line_click("", "=s1:", "tam").startswith("reload-sync(")
+    def count():
+        return len(tmux("list-windows", "-t", "s1", "-F", "x").split())
+
+    # A click elsewhere on the session's line does nothing.
+    assert sidebar.line_click("", "=s1:", "tam") == ""
+    monkeypatch.setattr(sidebar, "marked", lambda pane: "=s1:")  # fzf's cursor after the click
+    sidebar.mouse("%9", "S1", shown)
+    assert count() == 3
+    # On the button. The line as tmux reads it starts with fzf's pointer when marked.
+    sidebar.mouse("%9", "terminal", f"▌ {shown}")
     windows = tmux("list-windows", "-t", "s1", "-F", "#{pane_current_path}").split()
     # Right after the agent's window, in the agent's directory.
     assert [os.path.realpath(p) for p in windows] == [
@@ -446,7 +616,7 @@ def test_option_shortcuts_in_root_table(env):  # noqa: F811
     assert "⌥ a ·" not in sheet  # the user's own M-a binding is kept
 
 
-def test_sidebar_close_needs_two_clicks(env, monkeypatch):  # noqa: F811
+def test_sidebar_ctrl_x_closes_on_the_second_press(env, monkeypatch):  # noqa: F811
     from tam import sidebar
 
     tmux("new-session", "-d", "-s", "s1")
@@ -455,19 +625,79 @@ def test_sidebar_close_needs_two_clicks(env, monkeypatch):  # noqa: F811
     monkeypatch.setattr(sidebar, "_current", lambda client: ("s1", "0"))
     target = "=s1:1"
 
-    assert "victim" in sidebar.footer(target)
-    assert sidebar.click("c", target, "tam").startswith("change-footer(")
+    armed = sidebar.click("c", target, "tam")
+    assert armed.startswith("change-footer(") and "victim" in armed
     assert "victim" in tmux("list-windows", "-t", "s1", "-F", "#{window_name}")
-    # Focusing another line disarms the button.
+    # Moving to another line disarms it.
     sidebar.footer("=s2:")
     assert sidebar.click("c", target, "tam").startswith("change-footer(")
+    sidebar.footer(target)  # focus on the same line keeps it armed
     assert sidebar.click("c", target, "tam").startswith("reload-sync(")
     assert "victim" not in tmux("list-windows", "-t", "s1", "-F", "#{window_name}")
 
-    assert "session s2 (1 window)" in sidebar.footer("=s2:")
-    sidebar.click("c", "=s2:", "tam")
+    assert "session s2 (1 window)" in sidebar.click("c", "=s2:", "tam")
     sidebar.click("c", "=s2:", "tam")
     assert tmux("list-sessions", "-F", "#{session_name}").split() == ["s1"]
+
+
+def test_option_w_closes_the_marked_window_after_asking(env, monkeypatch):  # noqa: F811
+    from tam import config, paths, sidebar
+
+    monkeypatch.setattr(paths, "tam_executable", lambda: TAM)
+    tmux("new-session", "-d", "-s", "w", "-n", "here")
+    tmux("new-window", "-d", "-t", "w:", "-n", "marked")
+    subprocess.run([TAM, "tmux-init"], check=True)
+    assert "--close-marked" in tmux("list-keys", "-T", "root", "M-w")
+
+    asked = []
+    real_tmux = sidebar.tmux
+
+    def fake_tmux(*args, **kw):
+        if args[0] == "confirm-before":
+            asked.append(args)
+            return ""
+        return real_tmux(*args, **kw)
+
+    monkeypatch.setattr(sidebar, "tmux", fake_tmux)
+    monkeypatch.setattr(sidebar, "_current", lambda client: ("w", "0"))
+    # Hidden sidebar: no marked line, so the current window.
+    sidebar.close_marked("")
+    assert "close here? (y/n)" in asked[-1] and "--close =w:0" in asked[-1][-1]
+    # With a sidebar: the line marked in it.
+    config.set("sidebar", "shown")
+    sidebar.ensure()
+    monkeypatch.setattr(sidebar, "marked", lambda pane: "=w:1")
+    monkeypatch.setattr(
+        sidebar, "_by_window", lambda: {"@0": {"panes": [], "sidebars": [{"pane_id": "%1"}]}}
+    )
+    monkeypatch.setattr(sidebar, "_client", lambda client: ["-t", "=w:0"])
+    sidebar.close_marked("")
+    assert "close marked? (y/n)" in asked[-1] and "--close =w:1" in asked[-1][-1]
+    # What the confirmed prompt runs.
+    sidebar.close("", "=w:1")
+    assert real_tmux("list-windows", "-t", "w", "-F", "#{window_name}").split() == ["here"]
+
+
+def test_sidebar_marks_the_active_window():
+    from tam.sidebar import ACCENT, card
+
+    w = {"name": "w", "statuses": [], "pane": {"pane_current_command": "vim"}, "agent_pane": None}
+    active = card(w, 0, {}, None, active=True).splitlines()
+    assert all(ln.startswith(f"{ACCENT}┃") for ln in active)
+    assert not card(w, 0, {}).startswith(ACCENT)
+
+
+def test_sidebar_click_on_a_card_switches(env, monkeypatch):  # noqa: F811
+    from tam import sidebar
+
+    tmux("new-session", "-d", "-s", "s1")
+    calls = []
+    monkeypatch.setattr(sidebar, "_go", lambda client, target: calls.append(target))
+    assert sidebar.line_click("c", "=s1:0", "tam") == ""
+    assert calls == ["=s1:0"]
+    monkeypatch.setenv("FZF_PROMPT", sidebar.RENAME_PROMPT)
+    assert sidebar.line_click("c", "=s1:0", "tam") == ""  # renaming: only moves the cursor
+    assert calls == ["=s1:0"]
 
 
 def _panes(window: str) -> list[tuple[str, bool]]:
@@ -502,6 +732,67 @@ def test_sidebar_ensure_toggle_and_cleanup(env):  # noqa: F811
     assert tmux("list-windows", "-t", "s1", "-F", "#{window_index}").split() == ["0"]
 
 
+def test_tmux_init_restarts_sidebars_started_by_an_older_tam(env, monkeypatch):  # noqa: F811
+    from tam import config, paths, sidebar
+
+    monkeypatch.setattr(paths, "tam_executable", lambda: TAM)
+    config.set("sidebar", "shown")
+    tmux("new-session", "-d", "-s", "s1", "-x", "160", "-y", "40")
+    subprocess.run([TAM, "tmux-init"], check=True)
+
+    def sidebar_pid():
+        out = tmux("list-panes", "-t", "=s1:0", "-F", "#{pane_pid} #{pane_start_command}")
+        return next(ln.split()[0] for ln in out.splitlines() if sidebar.PANE_COMMAND in ln)
+
+    before = sidebar_pid()
+    subprocess.run([TAM, "tmux-init"], check=True)
+    assert sidebar_pid() != before
+    assert _panes("=s1:0")[0] == (str(sidebar.WIDTH), True)
+
+
+def test_sidebar_tick_reloads_only_after_a_change(env, monkeypatch):  # noqa: F811
+    from tam import sidebar
+
+    tmux("new-session", "-d", "-s", "s1", "-n", "one")
+    pane = tmux("list-panes", "-t", "=s1:0", "-F", "#{pane_id}").strip()
+    monkeypatch.setenv("TMUX_PANE", pane)
+    monkeypatch.setenv("TAM_SIDEBAR_PANE", "1")
+    monkeypatch.setattr(sidebar, "foreground_commands", lambda: {})
+    first = sidebar.tick()
+    assert first.startswith("reload-sync(cat ") and "transform-header(cat " in first
+    list_file, _ = sidebar._tick_files(pane)
+    window = tmux("display-message", "-p", "-t", "=s1:0", "#{window_id}").strip()
+    assert f"\0{window}\t" in list_file.read_text()  # cards name windows by id
+    assert sidebar.tick() == ""  # nothing changed: no reload, nothing blocks fzf
+    tmux("rename-window", "-t", "=s1:0", "renamed")
+    assert sidebar.tick().startswith("reload-sync(")
+    assert "renamed" in list_file.read_text()
+    args = " ".join(sidebar.fzf_args("tam", 0, ""))
+    assert "bg-transform:" in args and "focus:bg-transform-footer:" in args
+
+
+def test_sidebar_marks_its_own_window_after_a_switch(env, monkeypatch):  # noqa: F811
+    from tam import config, paths
+
+    monkeypatch.setattr(paths, "tam_executable", lambda: TAM)
+    config.set("sidebar", "shown")
+    tmux("new-session", "-d", "-s", "s1", "-x", "160", "-y", "40", "-n", "one")
+    tmux("new-window", "-t", "s1:", "-n", "two")
+    subprocess.run([TAM, "tmux-init"], check=True)
+    side = tmux("list-panes", "-t", "=s1:1", "-F", "#{pane_id}").split()[0]
+
+    def marked() -> str:
+        shot = tmux("capture-pane", "-p", "-t", side).splitlines()
+        return " ".join(ln for ln in shot if ln.startswith("▌"))
+
+    wait_for(lambda: "two" in marked())
+    tmux("send-keys", "-t", side, "Up")  # the cursor moves to window one's card
+    wait_for(lambda: "one" in marked())
+    tmux("select-window", "-t", "=s1:0")
+    tmux("select-window", "-t", "=s1:1")
+    wait_for(lambda: "two" in marked(), show=side)
+
+
 def test_sidebar_keeps_its_width_when_the_window_grows(env):  # noqa: F811
     from tam import config, sidebar
 
@@ -522,7 +813,8 @@ def test_sidebar_panes_are_not_listed_and_are_saved_as_sidebars(env):  # noqa: F
     tmux("new-session", "-d", "-s", "s1", "-x", "160", "-y", "40")
     sidebar.ensure()
     out, _ = sidebar.lines(sidebar.pane_rows(), ("s1", "0"))
-    assert [item.split("\t")[0] for item in out] == ["=s1:", "=s1:0"]
+    window = tmux("display-message", "-p", "-t", "=s1:0", "#{window_id}").strip()
+    assert [item.split("\t")[0] for item in out] == ["=s1:", window]
     assert "terminal" in out[1]
     panes = state.capture()["sessions"][0]["windows"][0]["panes"]
     assert [p.get("sidebar", False) for p in panes] == [True, False]
@@ -539,8 +831,11 @@ def test_sidebar_pane_marks_itself_and_keeps_the_window_name(env, monkeypatch): 
     sidebar.ensure()
     sidebar_pane = tmux("list-panes", "-t", "=s1:0", "-F", "#{pane_id}").split()[0]
     wait_for(lambda: tmux("show-options", "-pqv", "-t", sidebar_pane, "@tam_sidebar").strip())
-    fmt = tmux("show-options", "-wqv", "-t", "=s1:0", "automatic-rename-format")
-    assert fmt.startswith("#{?#{@tam_sidebar},#{window_name},")
+
+    def fmt():
+        return tmux("show-options", "-wqv", "-t", "=s1:0", "automatic-rename-format")
+
+    wait_for(lambda: fmt().startswith("#{?#{@tam_sidebar},#{window_name},"))
 
 
 def test_move_window(env, monkeypatch):  # noqa: F811

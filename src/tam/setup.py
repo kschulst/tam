@@ -50,6 +50,10 @@ SIDEBAR_HOOK_INDEX = 43
 # sidebar with the window.
 SIDEBAR_HOOKS = ["after-new-window", "session-created", "client-resized", "window-resized"]
 SIDEBAR_CLOSE_HOOKS = ["pane-exited", "after-kill-pane"]
+# Events after which the new current window's sidebar moves its cursor to the
+# window's own card (`tam sidebar --refocus`).
+REFOCUS_HOOK_INDEX = 44
+REFOCUS_HOOKS = ["session-window-changed", "client-session-changed"]
 
 # Settings Claude Code needs for keys, notifications and clipboard.
 CLAUDE_SETTINGS = [
@@ -98,6 +102,32 @@ def key_bindings(exe: str) -> list[list[str]]:
         ["prefix", "h", "tam: cheat sheet", *popup_command(exe)],
         ["root", "M-h", "tam: cheat sheet", *popup_command(exe)],
         ["root", "M-q", "tam: quit (detach; agents keep running)", "detach-client"],
+        [
+            "root",
+            "M-w",
+            "tam: close the window marked in the sidebar (asks first)",
+            "run-shell",
+            "-b",
+            f"{exe} sidebar --close-marked --client '#{{client_name}}'",
+        ],
+        # A click in a sidebar also goes to tam, with the word under the mouse:
+        # fzf reports which line was clicked, not where on it. Other panes keep
+        # tmux's own behaviour.
+        [
+            "root",
+            "MouseDown1Pane",
+            "tam: mouse click (sidebar: + terminal)",
+            "if-shell",
+            "-F",
+            "-t",
+            "=",
+            "#{@tam_sidebar}",
+            "select-pane -t = ; send-keys -M ; "
+            # w and l keep an empty word or line an argument; tam drops them.
+            f"run-shell -b '{exe} sidebar --mouse #{{pane_id}}"
+            " w#{q:mouse_word} l#{q:mouse_line}'",
+            MOUSE_DEFAULT,
+        ],
         ["prefix", "s", "tam: sessions and agents", *sidebar],
         ["root", "M-s", "tam: sessions and agents", *sidebar],
         ["prefix", "S", "tam: show or hide the sidebar", *toggle_sidebar],
@@ -199,6 +229,8 @@ TMUX_DEFAULT_BINDINGS = {
     ".": 'command-prompt { move-window -t "%%" }',
     "t": "clock-mode",
 }
+MOUSE_DEFAULT = "select-pane -t = ; send-keys -M"
+TMUX_DEFAULT_ROOT_BINDINGS = {"MouseDown1Pane": "select-pane -t = \\; send-keys -M"}
 
 
 def tam_key(key: str, table: str = "prefix") -> bool | None:
@@ -211,7 +243,8 @@ def tam_key(key: str, table: str = "prefix") -> bool | None:
     bound = tmux("list-keys", "-T", table, key, check=False).strip()
     m = re.search(rf"-T {table}\s+\S+\s+(.*)$", bound)
     command = m.group(1).strip() if m else bound
-    if not command or (table == "prefix" and command == TMUX_DEFAULT_BINDINGS.get(key)):
+    defaults = TMUX_DEFAULT_BINDINGS if table == "prefix" else TMUX_DEFAULT_ROOT_BINDINGS
+    if not command or command == defaults.get(key):
         return None
     # Bindings from tam versions that did not set a note.
     return "tam" in command and any(c in command for c in (" new ", " term ", " help --"))
@@ -246,6 +279,9 @@ def tmux_init() -> int:
     features = tmux("show-options", "-s", "terminal-features", check=False)
     if "xterm*:extkeys" not in features:
         tmux("set-option", "-as", "terminal-features", "xterm*:extkeys")
+    # Links in the sidebar (a window's PR) reach the terminal only with this.
+    if "hyperlinks" not in features:
+        tmux("set-option", "-as", "terminal-features", "*:hyperlinks")
 
     for hook in SNAPSHOT_HOOKS:
         delay = f"sleep {CLOSE_DELAY}; " if hook in CLOSE_HOOKS else ""
@@ -261,6 +297,13 @@ def tmux_init() -> int:
             f"{hook}[{SIDEBAR_HOOK_INDEX}]",
             f"if-shell -F '{when}' \"run-shell -b '{delay}{exe} sidebar --ensure'\"",
         )
+    for hook in REFOCUS_HOOKS:
+        tmux(
+            "set-hook",
+            "-g",
+            f"{hook}[{REFOCUS_HOOK_INDEX}]",
+            f"if-shell -F '{when}' \"run-shell -b '{exe} sidebar --refocus #{{window_id}}'\"",
+        )
 
     for table, key, note, *command in key_bindings(exe):
         _bind(table, key, note, command)
@@ -271,6 +314,9 @@ def tmux_init() -> int:
     sidebar.sync_option()
     if tmux("show-options", "-gqv", RESTORED_FLAG, check=False).strip() == "1":
         sidebar.ensure()
+        # Sidebars started by an older tam (before an upgrade or just dev-on) still
+        # run its fzf bindings.
+        sidebar.restart()
     return 0
 
 

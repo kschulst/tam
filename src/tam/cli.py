@@ -182,8 +182,28 @@ def cmd_sidebar(a: argparse.Namespace) -> int:
         return 0
     if a.pane:
         return sidebar.run_pane()
+    if a.pr_refresh:
+        from tam import pr
+
+        pr.refresh(*a.pr_refresh)
+        return 0
+    if a.refs_refresh:
+        from tam import refs
+
+        refs.refresh(a.refs_refresh)
+        return 0
     if a.ensure:
         sidebar.ensure()
+        return 0
+    if a.refocus:
+        sidebar.refocus(a.refocus)
+        return 0
+    if a.tick:
+        print(sidebar.tick())
+        return 0
+    if a.mouse:
+        pane, word, line = a.mouse
+        sidebar.mouse(pane, word.removeprefix("w"), line.removeprefix("l"))
         return 0
     if a.toggle:
         sidebar.toggle()
@@ -193,6 +213,12 @@ def cmd_sidebar(a: argparse.Namespace) -> int:
     if a.click is not None:
         if a.click:
             print(sidebar.click(client, a.click, paths.tam_executable()))
+        return 0
+    if a.close_marked:
+        sidebar.close_marked(client)
+        return 0
+    if a.close:
+        sidebar.close(client, a.close)
         return 0
     if a.line_click is not None:
         if a.line_click:
@@ -318,6 +344,11 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--client", help=argparse.SUPPRESS)
     s.add_argument("--pane", action="store_true", help=argparse.SUPPRESS)
     s.add_argument("--ensure", action="store_true", help=argparse.SUPPRESS)
+    s.add_argument("--refocus", help=argparse.SUPPRESS)
+    s.add_argument("--tick", action="store_true", help=argparse.SUPPRESS)
+    s.add_argument("--mouse", nargs=3, help=argparse.SUPPRESS)
+    s.add_argument("--close-marked", action="store_true", help=argparse.SUPPRESS)
+    s.add_argument("--close", help=argparse.SUPPRESS)
     s.add_argument("--list", action="store_true", help=argparse.SUPPRESS)
     s.add_argument("--footer", help=argparse.SUPPRESS)
     s.add_argument("--click", help=argparse.SUPPRESS)
@@ -326,6 +357,8 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--escape", action="store_true", help=argparse.SUPPRESS)
     s.add_argument("--header", action="store_true", help=argparse.SUPPRESS)
     s.add_argument("--line-click", help=argparse.SUPPRESS)
+    s.add_argument("--pr-refresh", nargs=2, help=argparse.SUPPRESS)
+    s.add_argument("--refs-refresh", help=argparse.SUPPRESS)
     s.add_argument("--name", help=argparse.SUPPRESS)
     s.set_defaults(func=cmd_sidebar)
 
