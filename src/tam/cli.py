@@ -135,6 +135,33 @@ def cmd_run(a: argparse.Namespace) -> int:
     )
 
 
+def cmd_prompt(a: argparse.Namespace) -> int:
+    """⌥ /: run what was typed in tmux's command prompt as `tam <that>`, in a popup.
+
+    Waits for a key at the end, so the output can be read before the popup closes.
+    """
+    import subprocess
+    import termios
+    import tty
+
+    # Already split by the popup's shell, quotes and all.
+    words = list(a.words) or ["--help"]
+    if words[0] == "tam":  # typed with the program's name
+        words = words[1:] or ["--help"]
+    code = subprocess.run([paths.tam_executable(), *words]).returncode
+    print(f"\n(tam exited with {code}) " if code else "\n", end="")
+    print("press a key to close", end="", flush=True)
+    fd = sys.stdin.fileno()
+    if os.isatty(fd):
+        old = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd)
+            os.read(fd, 1)
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+    return code
+
+
 def cmd_mcp(a: argparse.Namespace) -> int:
     from tam import mcp
 
@@ -401,6 +428,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     s.add_argument("action", nargs="?", choices=["serve", "install", "uninstall"], default="serve")
     s.set_defaults(func=cmd_mcp)
+
+    s = sub.add_parser("prompt")  # ⌥ /: tmux's command prompt runs this in a popup
+    s.add_argument("words", nargs=argparse.REMAINDER)
+    s.set_defaults(func=cmd_prompt)
 
     s = sub.add_parser("snapshot")
     s.set_defaults(func=cmd_snapshot)

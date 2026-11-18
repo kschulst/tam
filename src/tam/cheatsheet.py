@@ -51,6 +51,13 @@ def _keys(prefix: str, key: str) -> str:
     return with_prefix
 
 
+def _command_keys() -> str:
+    """⌥ / when tam owns it, else the shell command it stands for."""
+    from tam.setup import tam_key
+
+    return "⌥ /" if server_running() and tam_key("M-/", "root") else "tam <command>"
+
+
 def _option_or_tmux(prefix: str, option: str, tmux_key: str) -> str:
     """⌥ <option> when tam owns it, plus tmux's own prefix key for the same thing."""
     from tam.setup import tam_key
@@ -94,6 +101,7 @@ def text(closing_hint: bool = False, client: str | None = None) -> str:
         ("tam agent <name>", f"change the default agent (now {agent})"),
         ("tam adopt", "take over an agent running outside tmux"),
         ("! tam adopt", "same, typed inside that agent's session"),
+        (_command_keys(), "run a tam command, e.g. mcp install (Up: history)"),
         ("tmux", None),
         (_option_or_tmux(p, "q", "d"), "quit tam (agents keep running; tam attaches again)"),
         (_option_or_tmux(p, "w", "&"), "close the marked window (asks first)"),

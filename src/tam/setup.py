@@ -102,6 +102,17 @@ def key_bindings(exe: str) -> list[list[str]]:
         ["prefix", "h", "tam: cheat sheet", *popup_command(exe)],
         ["root", "M-h", "tam: cheat sheet", *popup_command(exe)],
         ["root", "M-q", "tam: quit (detach; agents keep running)", "detach-client"],
+        # tmux's own prompt: what you type runs as `tam <that>` in a popup, with
+        # the prompt's history (Up) and a terminal for interactive commands.
+        [
+            "root",
+            "M-/",
+            "tam: run a tam command",
+            "command-prompt",
+            "-p",
+            "tam",
+            f"display-popup -E -w 80% -h 60% -T ' tam ' \"{exe} prompt %%%\"",
+        ],
         [
             "root",
             "M-w",
