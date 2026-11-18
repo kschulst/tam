@@ -41,12 +41,31 @@ def tam_executable() -> str:
     return shutil.which("tam") or "tam"
 
 
-def tam_version() -> str:
+def tam_version(checkout: Path | None = None) -> str:
+    """The release, or `<release>+dev.<commit>[.dirty]` when running from a git checkout.
+
+    checkout is the directory that would hold .git (default: two levels above the
+    package, which is where it is for `just dev-on`).
+    """
     from importlib.metadata import PackageNotFoundError, version
 
     try:
-        return version("tam")
+        release = version("tam")
     except PackageNotFoundError:  # installed without packaging metadata, e.g. Homebrew
         from tam import __version__
 
-        return __version__
+        release = __version__
+    root = checkout or Path(__file__).resolve().parent.parent.parent
+    if not (root / ".git").exists():
+        return release
+    import subprocess
+
+    def git(*args: str) -> str:
+        proc = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True)
+        return proc.stdout.strip() if proc.returncode == 0 else ""
+
+    commit = git("rev-parse", "--short", "HEAD")
+    if not commit:
+        return release
+    dirty = ".dirty" if git("status", "--porcelain", "--untracked-files=no") else ""
+    return f"{release}+dev.{commit}{dirty}"

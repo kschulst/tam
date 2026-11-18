@@ -221,6 +221,29 @@ def test_sidebar_lines():
     assert selected == 2
 
 
+def test_version_in_a_checkout_names_the_commit(tmp_path):
+    from tam import __version__
+    from tam.paths import tam_version
+
+    assert tam_version(tmp_path) == __version__  # no .git: a release install
+
+    def git(*args):
+        subprocess.run(["git", "-C", str(tmp_path), *args], check=True, capture_output=True)
+
+    git("init", "-q")
+    (tmp_path / "f").write_text("1")
+    git("add", "f")
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "c")
+    commit = subprocess.run(
+        ["git", "-C", str(tmp_path), "rev-parse", "--short", "HEAD"],
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert tam_version(tmp_path) == f"{__version__}+dev.{commit}"
+    (tmp_path / "f").write_text("2")
+    assert tam_version(tmp_path) == f"{__version__}+dev.{commit}.dirty"
+
+
 def test_tmux_default_binding_is_replaced(env):  # noqa: F811
     tmux("new-session", "-d", "-s", "d")
     assert "choose-tree" in tmux("list-keys", "-T", "prefix", "s")

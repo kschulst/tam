@@ -4,7 +4,15 @@ import argparse
 import os
 import sys
 
-from tam import __version__, paths
+from tam import paths
+
+
+class _Version(argparse.Action):
+    """--version, read only when asked: in a checkout it runs git."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        print(f"tam {paths.tam_version()}")
+        parser.exit()
 
 
 def _attach(session: str, then: list[str]) -> int:
@@ -239,7 +247,7 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         prog="tam", description="Agent sessions in tmux that survive a reboot."
     )
-    p.add_argument("--version", action="version", version=f"tam {__version__}")
+    p.add_argument("--version", action=_Version, nargs=0, help="show the version and exit")
     p.add_argument("--no-attach", action="store_true", help=argparse.SUPPRESS)
     p.set_defaults(func=cmd_default)
     sub = p.add_subparsers(metavar="command")
