@@ -3,3 +3,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 dist/
+# Editor swap and backup files
+*.swp
+*.swo
+*~
