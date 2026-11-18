@@ -35,6 +35,14 @@ An agent pane runs `tam run`, which starts the agent and stores on the pane:
 
 When the agent exits, `tam run` keeps the pane and waits: Enter resumes, `q` closes.
 
+## Sidebar
+
+The sidebar is a pane running `tam sidebar --pane` (fzf) on the left of every window, 44 columns wide. tam recognises it by that start command. It is saved and restored like any pane, so the saved layout keeps its column.
+
+Showing or hiding is one setting for all windows: `sidebar = "shown"` or `"hidden"` in `config.toml`, copied to the tmux option `@tam_sidebar_shown`. After a new window, a new session, a resize or a closed pane, a tmux hook runs `tam sidebar --ensure`: it adds the sidebar to windows without one, sets its width back to 44 columns, removes it everywhere when hidden, and closes a window with only its sidebar left. The hooks check the option in tmux first, so with the sidebar hidden no Python runs. After a closed pane, `--ensure` waits two seconds, for the same reason as saving does (see [Shutdown](#shutdown)).
+
+A visible sidebar reloads every 2 seconds. A sidebar in a window no client shows checks that with one tmux call and does not reload. The command a terminal pane runs comes from one `ps` call per reload, because tmux gives only the program's name.
+
 ## Restoring
 
 After a reboot no tmux server runs. `tam` starts one and recreates every saved session that does not exist, with its windows, splits and directories, then attaches. Shell panes get a shell. Agent panes run `tam run --wait` and resume only when you press Enter in them.
@@ -61,6 +69,8 @@ The status hooks are plain shell commands that set a tmux option, because `PostT
 
 `tam adopt` lists Claude processes outside tmux, and recent conversations. The chosen one is stopped and resumed in a tam window.
 
+The session id of a running Claude comes, in this order, from Claude Code's own session file (`~/.claude/sessions/<pid>.json`, written by recent versions), from tam's `seen` file, or from the newest transcript in the process's directory. The session file also gives the name and status the list shows. Its format is not documented, so tam skips files it cannot read.
+
 Typed inside Claude Code as `! tam adopt`, it moves that session: it reads `CLAUDE_CODE_SESSION_ID`, starts a helper outside Claude's process group, prints a message, and exits. The helper stops Claude, opens the window with `claude --resume`, and the next `tam` attaches to it.
 
 ## Files
@@ -69,5 +79,5 @@ Typed inside Claude Code as `! tam adopt`, it moves that session: it reads `CLAU
 |---|---|
 | `~/.local/state/tam/state.json` | Saved tmux layout and agents |
 | `~/.local/state/tam/seen/` | Claude sessions seen by the hook, for `tam adopt` |
-| `~/.config/tam/config.toml` | `default_agent` |
+| `~/.config/tam/config.toml` | `default_agent`, `sidebar` |
 | `~/.config/tam/harnesses.toml` | Your own agents and overrides ([Agents](agents.md)) |

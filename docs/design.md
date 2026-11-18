@@ -152,7 +152,17 @@ Pane-optionen `@tam_status` har en av disse verdiene:
 
 Status-hookene er rene shell-kommandoer (`tmux set -p -t "$TMUX_PANE" @tam_status ...`) uten Python, fordi `PostToolUse` kjører ved hvert verktøykall. Statusen lagres ikke i `state.json`.
 
-`tam sidebar` åpner en `fzf`-popup i full høyde langs venstre kant. Den viser sesjoner og vinduer, og agentvinduer har status. Et vindu med flere agentpanes viser den mest presserende statusen (`waiting` før `working`). Enter kjører `switch-client` til valgt sesjon eller vindu. Markøren starter på gjeldende vindu.
+Sidebaren er en pane på 44 kolonner lengst til venstre i hvert vindu. Den kjører `tam sidebar --pane` (`fzf`) og gjenkjennes på startkommandoen. Den viser sesjoner og vinduer. Hvert vindu er et kort med tre linjer:
+
+1. Navn. Et vindu som heter det samme som skallet (`zsh`, `bash`, ...) og har automatic-rename på, vises med mappenavnet.
+2. Hva som kjører. For en agent er det pane-tittelen (det agenten sier den gjør). For en terminal er det kommandolinjen til programmet i forgrunnen (fra ett `ps`-kall per reload), eller mappen når skallet venter.
+3. Status, antall panes (når det er flere enn én), tid siden aktivitet og git-branch.
+
+Et vindu med flere agentpanes viser den mest presserende statusen (`waiting` før `working`). Enter eller dobbeltklikk kjører `switch-client` til valgt sesjon eller vindu. Linjen for sidebarens eget vindu flytter fokus tilbake til vinduet, og det gjør også Esc. `Ctrl+r` gir nytt navn til linjen. Et klikk på en sesjonslinje (`+ terminal`) åpner et skall i et nytt vindu rett etter agentvinduet, i agentens mappe. Agenten er den i sesjonens gjeldende vindu, ellers den første i sesjonen.
+
+Sidebaren vises eller skjules i alle vinduer samtidig: `sidebar = "shown"` eller `"hidden"` i `config.toml`, speilet i tmux-optionen `@tam_sidebar_shown`. Standard er `shown`. tmux-hooks på indeks 43 (`after-new-window`, `session-created`, `client-resized`, `window-resized`, `pane-exited`, `after-kill-pane`) kjører `tam sidebar --ensure` når optionen og `@tam_restored` er satt. `--ensure` legger sidebaren til der den mangler, setter bredden tilbake til 44, fjerner den når den er skjult, og lukker et vindu der bare sidebaren er igjen. Etter lukking venter den to sekunder, som snapshot. Ellers ville vinduer kunne lagres som borte under en shutdown. Sidebaren lagres i `state.json` som en pane med `"sidebar": true`, slik at layouten passer ved restore. Etter restore kjøres `--ensure`.
+
+En synlig sidebar laster inn på nytt hvert 2. sekund (`fzf` `every(2)`), med `--track --id-nth 1`, slik at markøren blir på samme linje. En sidebar i et vindu ingen klient viser, bruker ett tmux-kall per tick og laster ikke inn. Mens sidebaren har fokus, beholder vinduet navnet sitt. Det gjøres med en `automatic-rename-format` per vindu som leser pane-optionen `@tam_sidebar`.
 
 Bunnfeltet i sidebaren er en lukkeknapp for linjen som er markert: `[ ✕ close <vindu> ]` eller `[ ✕ close session <navn> (N windows) ]`. Første klikk (eller `Ctrl+x`) endrer teksten til `click again to close ...`, og andre klikk lukker med `kill-window` eller `kill-session`. Hvis du flytter til en annen linje, nullstilles knappen. Den aktiverte linjen lagres i `~/.local/state/tam/sidebar-armed`, fordi hver `fzf`-handling kjører i en ny prosess. Lukkes sesjonen klienten står i, flyttes klienten først til en annen sesjon, ellers ville tmux koblet den fra. `fzf` oppgir bare kolonnen for klikk i topp- og bunnfeltet, og derfor er det én knapp nederst og ikke et kryss på hver linje.
 
@@ -165,7 +175,13 @@ Bunnfeltet i sidebaren er en lukkeknapp for linjen som er markert: `[ ✕ close 
 
 Kjøres `tam adopt` fra en Claude-sesjon (`! tam adopt`), er Claude en forelderprosess. Da flyttes den sesjonen uten liste og uten bekreftelse. `tam adopt` starter en hjelpeprosess i en egen prosessgruppe (`start_new_session`), skriver en melding som Claude viser, og avslutter. Hjelpeprosessen venter ett sekund, stopper Claude, gjenoppretter eller starter tmux, åpner vinduet med `--resume` og setter `@tam_attach_to`, slik at neste `tam` attacher til den sesjonen. Feil skrives til `~/.local/state/tam/adopt.log`.
 
-Sesjoner som ble startet før hooken var installert, finnes med `lsof` (mappe) og transkriptet som sist ble endret. Har du flere sesjoner i samme mappe, er det et gjett.
+Sesjons-ID for en Claude-prosess som kjører, hentes i denne rekkefølgen:
+
+1. Claude Codes egen sesjonsfil `~/.claude/sessions/<pid>.json`. Nyere versjoner skriver den, med `sessionId`, `cwd`, `name` og `status`. Lista viser da Claudes navn og status.
+2. tam sin `seen`-fil fra hooken.
+3. `lsof` (mappe) og transkriptet som sist ble endret. Har du flere sesjoner i samme mappe, er det et gjett.
+
+Formatet på sesjonsfilen er ikke dokumentert. Filer som ikke kan leses, eller som mangler felt, hoppes over. Uten filene virker `tam adopt` som før.
 
 ## CLI
 
@@ -175,7 +191,8 @@ Sesjoner som ble startet før hooken var installert, finnes med `lsof` (mappe) o
 | `tam new [agent] [-n navn] [--split h\|v] [-- flagg]` | Ny agentpane |
 | `tam adopt` | Meld inn en ekstern eller avsluttet Claude-sesjon |
 | `tam move [sesjon]` | Flytt gjeldende vindu til en annen sesjon |
-| `tam sidebar` | Sesjoner og agenter med status, bytt med Enter |
+| `tam sidebar` | Flytt fokus til sidebaren, eller tilbake. `--toggle` viser eller skjuler den i alle vinduer. |
+| `tam --version` | Versjonen. Fra en git-checkout: `<release>+dev.<commit>`, med `.dirty` når sporede filer er endret. |
 | `tam help` | Jukselapp med `tam`- og tmux-versjon: popup inne i tmux, ellers utskrift |
 | `tam setup` | Legg til `source`-linjen i `~/.tmux.conf`, installer Claude-hooken og sjekk avhengigheter |
 | `tam snapshot`, `tam run`, `tam hook`, `tam tmux-init` | Interne kommandoer, kalles av tmux, panes og hooks |
@@ -193,9 +210,11 @@ Taster:
 | `prefix + A` | `tam new claude --split h` |
 | `prefix + h`, `⌥ h` | Jukselappen i en popup (`tam help`) |
 | `prefix + .` | Flytt vinduet til en annen sesjon, valgt i en `fzf`-popup (`tam move`). Et nytt navn lager sesjonen. Flyttes det siste vinduet ut av en sesjon, følger klienten med. Erstatter tmux sin standard `move-window`-prompt. |
-| `prefix + s`, `⌥ s` | Sidebar: sesjoner og vinduer med agentstatus (`tam sidebar`). Erstatter tmux sin standard `choose-tree -Zs`. |
+| `prefix + s`, `⌥ s` | Fokus til sidebaren, og tilbake (`tam sidebar`). En skjult sidebar vises først. Erstatter tmux sin standard `choose-tree -Zs`. |
+| `prefix + S`, `⌥ S` | Vis eller skjul sidebaren i alle vinduer (`tam sidebar --toggle`) |
+| `⌥ q` | `detach-client`, som `prefix + d`. tmux og agentene kjører videre. |
 
-`⌥ a`, `⌥ s` og `⌥ h` ligger i root-tabellen (uten prefix) og virker når terminalen sender Option som Meta (iTerm2: Left Option key = Esc+). Tastene får en beskrivelse (`-N "tam: ..."`), så de vises i `prefix + ?`. En tast med tmux sin standardbinding (`s`) erstattes. En tast brukeren selv har bundet til noe annet (f.eks. `h` for vim-navigasjon), overskrives ikke. Jukselappen viser da kommandoen i stedet for tasten.
+`⌥ a`, `⌥ s`, `⌥ S`, `⌥ h` og `⌥ q` ligger i root-tabellen (uten prefix) og virker når terminalen sender Option som Meta (iTerm2: Left Option key = Esc+). Tastene får en beskrivelse (`-N "tam: ..."`), så de vises i `prefix + ?`. En tast med tmux sin standardbinding (`s`) erstattes. En tast brukeren selv har bundet til noe annet (f.eks. `h` for vim-navigasjon), overskrives ikke. Jukselappen viser da kommandoen i stedet for tasten.
 
 Hver gang `tam` attacher, vises jukselappen som popup. Den lukkes med en vilkårlig tast. Utenfor tmux gjøres det med en engangs-hook på `client-attached`, siden klienten ikke finnes før `tam` har gjort `exec tmux attach`. Popupen tilpasses klientens størrelse (`tam help --client`), fordi tmux uten feilmelding avviser en popup som er større enn terminalen.
 

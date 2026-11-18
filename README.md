@@ -37,11 +37,15 @@ tam
 |---|---|
 | `⌥ a` | New agent. Pick the directory; `Enter` opens a new window, `Ctrl+v` / `Ctrl+s` a split right / below, `Tab` picks another agent. |
 | `⌥ t` | New terminal (no agent), with the same picker |
-| `⌥ s` | Sidebar: sessions and agents, `working` or `waiting`. Enter jumps there. |
+| `⌥ s` | Move focus to the sidebar, and back |
+| `⌥ S` | Show or hide the sidebar in every window |
 | `⌥ h` | Cheat sheet |
+| `⌥ q` | Quit tam. tmux and the agents keep running; `tam` attaches again. |
 | `Ctrl+b → .` | Move the window to another session |
 
-Every key also works as `Ctrl+b` followed by the letter. The `⌥` keys need Option to send Meta (iTerm2: Profiles → Keys → Left Option key: Esc+).
+Every key except `⌥ q` also works as `Ctrl+b` followed by the letter (`⌥ q` is tmux's own `Ctrl+b → d`). The `⌥` keys need Option to send Meta (iTerm2: Profiles → Keys → Left Option key: Esc+).
+
+The sidebar is a column on the left of every window. It lists sessions and windows, with each agent's status (`working`, `waiting`), what runs in each window and its git branch. Enter or a double click goes to a window, `Ctrl+r` renames, `Ctrl+x` closes, and `+ terminal` on a session's line opens a terminal in the directory of that session's agent.
 
 Already have Claude running in a plain terminal? Type `! tam adopt` in it, and it moves into tam.
 
