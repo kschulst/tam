@@ -81,6 +81,12 @@ def key_bindings(exe: str) -> list[list[str]]:
     ]
     sidebar = ["run-shell", "-b", f"{exe} sidebar --client '#{{client_name}}'"]
     toggle_sidebar = ["run-shell", "-b", f"{exe} sidebar --toggle"]
+    command_prompt = [
+        "command-prompt",
+        "-p",
+        "tam",
+        f"display-popup -E -w 80% -h 60% -T ' tam ' \"{exe} prompt %%%\"",
+    ]
     new_terminal = [
         "run-shell",
         "-b",
@@ -104,15 +110,10 @@ def key_bindings(exe: str) -> list[list[str]]:
         ["root", "M-q", "tam: quit (detach; agents keep running)", "detach-client"],
         # tmux's own prompt: what you type runs as `tam <that>` in a popup, with
         # the prompt's history (Up) and a terminal for interactive commands.
-        [
-            "root",
-            "M-/",
-            "tam: run a tam command",
-            "command-prompt",
-            "-p",
-            "tam",
-            f"display-popup -E -w 80% -h 60% -T ' tam ' \"{exe} prompt %%%\"",
-        ],
+        ["root", "M-/", "tam: run a tam command", *command_prompt],
+        # Where / needs Shift (Norwegian: Shift+7), a terminal with extended keys
+        # sends ⌥ / as M-S-/.
+        ["root", "M-S-/", "tam: run a tam command", *command_prompt],
         [
             "root",
             "M-w",

@@ -731,8 +731,10 @@ def test_mcp_tools_work_on_tams_windows(env):  # noqa: F811
 def test_option_slash_runs_a_tam_command_in_a_popup(env):  # noqa: F811
     tmux("new-session", "-d", "-s", "p")
     subprocess.run([TAM, "tmux-init"], check=True)
-    key = tmux("list-keys", "-T", "root", "M-/")
-    assert "command-prompt" in key and "display-popup" in key and "prompt %%%" in key
+    # M-S-/: ⌥ / where / needs Shift (Norwegian keyboard) and keys are extended.
+    for name in ("M-/", "M-S-/"):
+        key = tmux("list-keys", "-T", "root", name)
+        assert "command-prompt" in key and "display-popup" in key and "prompt %%%" in key
     # What the popup runs: the typed words as a tam command (no terminal: no wait).
     out = subprocess.run(
         [TAM, "prompt", "agent"], capture_output=True, text=True, stdin=subprocess.DEVNULL
