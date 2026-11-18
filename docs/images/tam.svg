@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="960" height="560" viewBox="0 0 960 560" role="img" aria-label="tam in a terminal: a sidebar lists tmux sessions with Claude and Codex agents and their status, next to a Claude Code pane">
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="560" viewBox="0 0 960 560" role="img" aria-label="tam in a terminal: a sidebar on the left lists tmux sessions with cards for Claude and Codex agents, their topic, status, branch and linked issues and PRs, next to a Claude Code pane">
   <style>
     text { font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px; fill: #d8dee9; white-space: pre; }
     .dim { fill: #6b7385; }
@@ -7,7 +7,7 @@
     .y { fill: #f1fa8c; }
     .c { fill: #8be9fd; }
     .p { fill: #ff79c6; }
-    .o { fill: #ffb86c; }
+    .u { text-decoration: underline; }
     .t { font-size: 13px; }
     .k { fill: #16171f; }
   </style>
@@ -29,58 +29,71 @@
   <circle cx="36" cy="27" r="6" fill="#ff5f57"/>
   <circle cx="56" cy="27" r="6" fill="#febc2e"/>
   <circle cx="76" cy="27" r="6" fill="#28c840"/>
-  <text x="480" y="32" text-anchor="middle" class="dim t">tmux · tam</text>
+  <text x="480" y="32" text-anchor="middle" class="dim t">tam:api</text>
+
+  <!-- sidebar pane (left) -->
+  <text x="37" y="70">4 total · 2 working · 1 waiting</text>
+  <text x="37" y="87" class="dim">Ctrl+r rename · Ctrl+x close</text>
+  <text x="20" y="110" class="c">&gt;</text>
+
+  <text x="37" y="134" class="dim">API</text><text x="382" y="134" text-anchor="end">+ terminal</text>
+
+  <!-- the current window: coloured bar and name; also the marked card -->
+  <rect x="17" y="154" width="372" height="68" rx="3" fill="#44475a" opacity="0.55"/>
+  <text x="20" y="168" class="c">▌</text>
+  <text x="37" y="168" class="c">┃</text><text x="45" y="168" class="y">○</text><text x="62" y="168" class="c b">Fix flaky upload test</text>
+  <text x="37" y="185" class="c">┃</text><text x="62" y="185">claude · ~/code/api</text>
+  <text x="37" y="202" class="c">┃</text><text x="62" y="202" class="dim">waiting · 3m · fix-upload-retry</text>
+  <text x="37" y="219" class="c">┃</text><text x="62" y="219">Issue: <tspan class="u">#40</tspan>  PR: <tspan class="u">#42</tspan></text>
+
+  <text x="45" y="253" class="g">●</text><text x="62" y="253" class="b">Rate limit the login endpoint</text>
+  <text x="62" y="270">codex · ~/code/api</text>
+  <text x="62" y="287" class="dim">working · now · login-rate-limit</text>
+  <text x="62" y="304">PR: <tspan class="u">#45</tspan></text>
+
+  <text x="45" y="338" class="dim">›</text><text x="62" y="338" class="b">api</text>
+  <text x="62" y="355">uv run pytest -x</text>
+  <text x="62" y="372" class="dim">terminal · 2 panes · 12m · main</text>
+
+  <text x="37" y="406" class="dim">WEB</text><text x="382" y="406" text-anchor="end">+ terminal</text>
+
+  <text x="45" y="440" class="g">●</text><text x="62" y="440" class="b">Dark mode for the settings page</text>
+  <text x="62" y="457">claude · ~/code/web</text>
+  <text x="62" y="474" class="dim">working · 1m · dark-mode</text>
+  <text x="62" y="491">Issue: <tspan class="u">#18</tspan></text>
+
+  <line x1="396" y1="44" x2="396" y2="518" stroke="#44475a"/>
 
   <!-- agent pane (right) -->
-  <text x="404" y="78" class="p b">✻</text>
-  <text x="422" y="78" class="b">Claude Code</text>
-  <text x="530" y="78" class="dim">~/code/api</text>
-  <text x="404" y="112" class="dim">&gt;</text>
-  <text x="422" y="112">fix the flaky upload test</text>
-  <text x="404" y="146" class="g">⏺</text>
-  <text x="422" y="146">Read tests/test_upload.py</text>
-  <text x="404" y="172" class="g">⏺</text>
-  <text x="422" y="172">The retry loop never waits between</text>
-  <text x="422" y="192">attempts, so the mock server is still</text>
-  <text x="422" y="212">starting on the second try.</text>
-  <text x="404" y="246" class="g">⏺</text>
-  <text x="422" y="246">Update(src/upload.py)</text>
-  <text x="422" y="268" class="dim">  42 </text><text x="470" y="268" class="g">+        time.sleep(backoff)</text>
-  <text x="422" y="288" class="dim">  43 </text><text x="470" y="288" class="g">+        backoff *= 2</text>
-  <text x="404" y="322" class="g">⏺</text>
-  <text x="422" y="322">Bash(uv run pytest tests/test_upload.py)</text>
-  <text x="422" y="342" class="dim">  ⎿  12 passed in 0.84s</text>
-  <rect x="404" y="420" width="524" height="36" rx="6" fill="none" stroke="#44475a"/>
-  <text x="418" y="443" class="dim">&gt;</text>
-  <rect x="434" y="430" width="9" height="17" fill="#d8dee9" opacity="0.8"/>
-
-  <!-- sidebar popup (left) -->
-  <rect x="26" y="56" width="356" height="452" rx="4" fill="#1a1b24" stroke="#8be9fd" stroke-opacity="0.55"/>
-  <rect x="44" y="47" width="196" height="18" fill="#1c1d27"/>
-  <text x="50" y="61" class="c t"> sessions · tam 0.1.0 </text>
-  <text x="42" y="92" class="c">&gt;</text>
-
-  <text x="42" y="126" class="b">api</text>
-  <rect x="34" y="136" width="340" height="24" rx="3" fill="#44475a" opacity="0.6"/>
-  <text x="50" y="153" class="y">○</text><text x="70" y="153">api:claude</text><text x="290" y="153" class="y">waiting</text>
-  <text x="50" y="179" class="g">●</text><text x="70" y="179">api:codex</text><text x="290" y="179" class="g">working</text>
-  <text x="70" y="205" class="dim">api:zsh</text>
-
-  <text x="42" y="241" class="b">web</text>
-  <text x="50" y="268" class="g">●</text><text x="70" y="268">web:claude</text><text x="290" y="268" class="g">working</text>
-  <text x="50" y="294" class="g">●</text><text x="70" y="294">web:gemini</text><text x="290" y="294" class="g">running</text>
-
-  <text x="42" y="330" class="b">docs</text>
-  <text x="50" y="357" class="dim">◌</text><text x="70" y="357">docs:claude</text><text x="290" y="357" class="dim">stopped</text>
-
-  <line x1="34" y1="466" x2="374" y2="466" stroke="#44475a"/>
-  <text x="42" y="490" class="o">[ ✕ close api:claude ]</text><text x="246" y="490" class="dim t">(or Ctrl+x)</text>
+  <text x="412" y="78" class="p b">✻</text>
+  <text x="430" y="78" class="b">Claude Code</text>
+  <text x="538" y="78" class="dim">~/code/api</text>
+  <text x="412" y="112" class="dim">&gt;</text>
+  <text x="430" y="112">fix the flaky upload test from issue #40</text>
+  <text x="412" y="146" class="g">⏺</text>
+  <text x="430" y="146">Read tests/test_upload.py</text>
+  <text x="412" y="172" class="g">⏺</text>
+  <text x="430" y="172">The retry loop never waits between attempts,</text>
+  <text x="430" y="192">so the mock server is still starting on the</text>
+  <text x="430" y="212">second try.</text>
+  <text x="412" y="246" class="g">⏺</text>
+  <text x="430" y="246">Update(src/upload.py)</text>
+  <text x="430" y="268" class="dim">  42 </text><text x="478" y="268" class="g">+        time.sleep(backoff)</text>
+  <text x="430" y="288" class="dim">  43 </text><text x="478" y="288" class="g">+        backoff *= 2</text>
+  <text x="412" y="322" class="g">⏺</text>
+  <text x="430" y="322">Bash(uv run pytest tests/test_upload.py)</text>
+  <text x="430" y="342" class="dim">  ⎿  12 passed in 0.84s</text>
+  <text x="412" y="376" class="g">⏺</text>
+  <text x="430" y="376">Opened PR #42: Wait between upload retries.</text>
+  <rect x="412" y="420" width="516" height="36" rx="6" fill="none" stroke="#44475a"/>
+  <text x="426" y="443" class="dim">&gt;</text>
+  <rect x="442" y="430" width="9" height="17" fill="#d8dee9" opacity="0.8"/>
 
   <!-- tmux status bar -->
   <g clip-path="url(#win)">
     <rect x="12" y="518" width="936" height="28" fill="#50fa7b"/>
   </g>
   <text x="24" y="537" class="k b">[api]</text>
-  <text x="80" y="537" class="k">1:api:claude*  2:api:codex  3:api:zsh</text>
+  <text x="80" y="537" class="k">1:claude*  2:codex  3:api</text>
   <text x="936" y="537" class="k" text-anchor="end">14:32</text>
 </svg>
