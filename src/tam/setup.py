@@ -439,7 +439,7 @@ def setup() -> int:
         print(f"{'✓' if option[0] else '✗'} {option[1]}")
 
     if not shutil.which("tam"):
-        print("✗ tam is not on PATH. tmux and the Claude hook call `tam` by name.")
+        print("✗ tam is not on PATH. tmux and the agent hooks call `tam` by name.")
         ok = False
 
     if server_running():

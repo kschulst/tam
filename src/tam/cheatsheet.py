@@ -86,12 +86,12 @@ def text(closing_hint: bool = False, client: str | None = None) -> str:
     sheet = _keys(p, "h") or "tam help"
     rows = [
         ("Agents", None),
-        (new_window, f"new {agent} in a new window, pick directory"),
+        (new_window, "new agent in a new window, pick directory"),
         ("Ctrl+v / Ctrl+s", "in the picker: split right / below"),
-        (new_split, f"new {agent} in a split"),
+        (new_split, "new agent in a split"),
         (_keys(p, "t") or "tam term", "new terminal, pick directory"),
         ("Tab in the picker", "use another agent this time"),
-        ("tam agent <name>", "change the default agent"),
+        ("tam agent <name>", f"change the default agent (now {agent})"),
         ("tam adopt", "take over an agent running outside tmux"),
         ("! tam adopt", "same, typed inside that agent's session"),
         ("tmux", None),
