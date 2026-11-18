@@ -221,6 +221,41 @@ def test_sidebar_lines():
     assert selected == 2
 
 
+def test_adopt_reads_claude_code_session_files(tmp_path, monkeypatch):
+    from tam import adopt
+
+    claude = tmp_path / "claude"
+    sessions = claude / "sessions"
+    sessions.mkdir(parents=True)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    (sessions / "111.json").write_text(
+        json.dumps(
+            {"pid": 111, "sessionId": "sid-a", "cwd": "/w", "name": "fix login", "status": "busy"}
+        )
+    )
+    (sessions / "222.json").write_text("{not json")
+    (sessions / "333.json").write_text(json.dumps({"pid": 333, "cwd": "/w"}))  # no sessionId
+    registry = adopt.claude_registry()
+    assert registry == {
+        111: {"session_id": "sid-a", "cwd": "/w", "name": "fix login", "status": "busy"}
+    }
+    # The session file wins over tam's own seen file.
+    seen = tmp_path / "state" / "tam" / "seen"
+    seen.mkdir(parents=True)
+    (seen / "111").write_text(json.dumps({"session_id": "sid-old", "cwd": "/old"}))
+    assert adopt._session_of(111) == ("sid-a", "/w")
+    (seen / "444").write_text(json.dumps({"session_id": "sid-seen", "cwd": "/s"}))
+    assert adopt._session_of(444) == ("sid-seen", "/s")  # no session file: as before
+
+
+def test_adopt_without_claude_session_files(tmp_path, monkeypatch):
+    from tam import adopt
+
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "missing"))
+    assert adopt.claude_registry() == {}
+
+
 def test_version_in_a_checkout_names_the_commit(tmp_path):
     from tam import __version__
     from tam.paths import tam_version

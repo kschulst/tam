@@ -27,11 +27,12 @@ class Candidate:
     pid: int | None = None
     tty: str = ""
     mtime: float = 0.0
+    status: str = ""  # Claude's own (idle, busy, ...), when it reports one
 
     def line(self) -> str:
         where = self.cwd.replace(str(Path.home()), "~")
         if self.pid:
-            status = f"running  {self.tty:<8}"
+            status = f"{self.status or 'running':<8} {self.tty:<8}"
         else:
             status = time.strftime("%Y-%m-%d %H:%M", time.localtime(self.mtime))
         return f"{status}  {where}  {self.title}"
@@ -95,6 +96,31 @@ def _newest_transcript(cwd: str) -> Path | None:
     return files[-1] if files else None
 
 
+def claude_registry() -> dict[int, dict]:
+    """pid -> {session_id, cwd, name, status} from Claude Code's own session files.
+
+    Recent Claude Code versions write ~/.claude/sessions/<pid>.json for each running
+    interactive session. The format is not documented, so anything missing or
+    unreadable is skipped, and callers fall back to the seen files and lsof.
+    """
+    out: dict[int, dict] = {}
+    for f in (paths.claude_dir() / "sessions").glob("*.json"):
+        try:
+            d = json.loads(f.read_text())
+            pid, sid, cwd = int(d["pid"]), str(d["sessionId"]), str(d["cwd"])
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        if sid and cwd:
+            name, status = d.get("name"), d.get("status")
+            out[pid] = {
+                "session_id": sid,
+                "cwd": cwd,
+                "name": name if isinstance(name, str) else "",
+                "status": status if isinstance(status, str) else "",
+            }
+    return out
+
+
 def _alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
@@ -120,21 +146,16 @@ def candidates() -> list[Candidate]:
     result: list[Candidate] = []
     used: set[str] = set()
 
+    registry = claude_registry()
     for pid, tty in _running_claude():
-        seen_file = paths.seen_dir() / str(pid)
-        if seen_file.exists():
-            info = json.loads(seen_file.read_text())
-            sid, cwd = info["session_id"], info["cwd"]
-        else:
-            # Started before the hook was installed: guess from the newest transcript.
-            cwd = _proc_cwd(pid)
-            t = _newest_transcript(cwd) if cwd else None
-            sid = t.stem if t else ""
+        known = registry.get(pid, {})
+        sid, cwd = _session_of(pid, known, fallback_cwd="")
         used.add(sid)
         if tty in in_tmux or not sid:
             continue
         _, title = transcript_info(project_dir(cwd) / f"{sid}.jsonl")
-        result.append(Candidate(sid, cwd, title, pid=pid, tty=tty))
+        title = known.get("name") or title
+        result.append(Candidate(sid, cwd, title, pid=pid, tty=tty, status=known.get("status", "")))
 
     recent = sorted(
         (paths.claude_dir() / "projects").glob("*/*.jsonl"),
@@ -209,14 +230,24 @@ def adopt(tam_exe: str) -> int:
     return 0
 
 
-def _session_of(pid: int) -> tuple[str, str]:
-    """(session id, cwd) of a running Claude process."""
+def _session_of(
+    pid: int, known: dict | None = None, fallback_cwd: str | None = None
+) -> tuple[str, str]:
+    """(session id, cwd) of a running Claude process.
+
+    In order: Claude Code's own session file (known, from claude_registry), tam's
+    seen file from the SessionStart hook, and a guess from the newest transcript
+    in the process's directory.
+    """
+    known = claude_registry().get(pid, {}) if known is None else known
+    if known:
+        return known["session_id"], known["cwd"]
     seen_file = paths.seen_dir() / str(pid)
     if seen_file.exists():
         info = json.loads(seen_file.read_text())
         return info["session_id"], info["cwd"]
-    cwd = _proc_cwd(pid) or os.getcwd()
-    t = _newest_transcript(cwd)
+    cwd = _proc_cwd(pid) or (os.getcwd() if fallback_cwd is None else fallback_cwd)
+    t = _newest_transcript(cwd) if cwd else None
     return (t.stem if t else ""), cwd
 
 
