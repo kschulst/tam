@@ -42,6 +42,7 @@ tam
 | `⌥ h` | Cheat sheet |
 | `⌥ q` | Quit tam. tmux and the agents keep running; `tam` attaches again. |
 | `⌥ w` | Close the window marked in the sidebar, after asking |
+| `⌥ /` | Run a tam command, such as `mcp install`, in a popup. Up gives earlier ones. |
 | `Ctrl+b → .` | Move the window to another session |
 
 Every key except `⌥ q` and `⌥ w` also works as `Ctrl+b` followed by the letter (`⌥ q` and `⌥ w` are tmux's own `Ctrl+b → d` and `Ctrl+b → &`). The `⌥` keys need Option to send Meta (iTerm2: Profiles → Keys → Left Option key: Esc+).
@@ -50,11 +51,13 @@ The sidebar is a column on the left of every window. It lists sessions and windo
 
 - An agent's card is named after what the agent is working on (the title it sets, such as Claude's), with its status: `working` or `waiting` for you.
 - A terminal's card shows the program running in it, or its directory.
-- Each card has the git branch, and links to up to three open issues and pull requests: the branch's own, then the ones the agent has shown. Cmd+click opens one. This needs [gh](https://cli.github.com).
+- Each card has the git branch, and a line with up to three open issues and pull requests, such as `Issue: #40  PR: #12`: the branch's own PR, those named in the agent's title, and those the agent has shown. Cmd+click opens one. This needs [gh](https://cli.github.com).
 - The window you are in has a coloured bar. One click on a card goes to that window; the arrow keys mark a card without going there, and `⌥ w` closes the marked one.
 - `+ terminal` on a session's line opens a terminal in the directory of that session's agent. `Ctrl+r` renames.
 
 Already have Claude running in a plain terminal? Type `! tam adopt` in it, and it moves into tam.
+
+`tam mcp install` lets your agents work with tam themselves: it registers tam's MCP server with every installed agent (Claude, Codex, Gemini). An agent can then list tam's windows, start an agent or a terminal, rename, close, switch to a window and type into another agent. It asks you first, as for any tool; closing its own window or typing into its own pane also needs `self`. `tam mcp uninstall` removes it.
 
 ## After a reboot
 

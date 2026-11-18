@@ -79,6 +79,16 @@ The session id of a running Claude comes, in this order, from Claude Code's own 
 
 Typed inside Claude Code as `! tam adopt`, it moves that session: it reads `CLAUDE_CODE_SESSION_ID`, starts a helper outside Claude's process group, prints a message, and exits. The helper stops Claude, opens the window with `claude --resume`, and the next `tam` attaches to it.
 
+## MCP server
+
+`tam mcp` is an MCP server on stdin and stdout (JSON-RPC, one message per line), written with the standard library. An agent starts it as a child process from its tmux pane, so it reaches the same tmux server and knows the caller's pane (`$TMUX_PANE`). Its tools use the same functions as the sidebar and the CLI: `list_windows`, `new_agent`, `new_terminal`, `close_window`, `close_session`, `rename`, `switch_to` and `send_text`. New windows are created with `-d`, so the user's view does not move. Closing the caller's own window or session, or typing into its own pane, needs `self=true`.
+
+`tam mcp install` runs each installed agent's own command (`claude mcp add --scope user`, `codex mcp add`, `gemini mcp add --scope user`) with the path of the tam that runs it, after removing an earlier registration.
+
+## Command prompt
+
+`⌥ /` opens tmux's `command-prompt`. The text is put in `display-popup … "tam prompt %%%"` (`%%%` escapes quotes), so it runs as `tam <text>` in a popup, which has a terminal for interactive commands and waits for a key at the end. The prompt keeps its own history.
+
 ## Files
 
 | Path | Contents |

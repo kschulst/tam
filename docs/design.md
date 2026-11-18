@@ -157,7 +157,7 @@ Sidebaren er en pane på 44 kolonner lengst til venstre i hvert vindu. Den kjør
 1. Navn. For en agent er det pane-tittelen agenten setter (Claude oppdaterer den når emnet endrer seg), med mindre vinduet har fått nytt navn med `Ctrl+r` (vindus-optionen `@tam_named`, lagret i `state.json`). En tittel som bare er programnavnet, regnes ikke som emne. Et vindu som heter det samme som skallet (`zsh`, `bash`, ...) og har automatic-rename på, vises med mappenavnet.
 2. Hva som kjører. For en agent er det agentnavnet og mappen. For en terminal er det kommandolinjen til programmet i forgrunnen (fra ett `ps`-kall per liste), eller mappen når skallet venter.
 3. Status, antall panes (når det er flere enn én), tid siden aktivitet og git-branch.
-4. Lenker, når det finnes: opptil tre åpne issues og PR-er som OSC 8-lenker (Cmd+klikk åpner). Først branchens åpne PR (`gh pr list --head`), så åpne issues og PR-er blant GitHub-lenkene i de siste 3000 linjene av agentpanen (`gh api repos/…/issues/<n>`, `state` er `open`). Begge kjøres i en bakgrunnsprosess og caches i `~/.local/state/tam/pr/` og `~/.local/state/tam/refs/` (skann høyst hvert 30. sekund, status i 5 minutter). `tmux-init` legger til `terminal-features '*:hyperlinks'`.
+4. Lenker, når det finnes: `Issue: #40, #41  PR: #12`, opptil tre åpne issues og PR-er, understreket og som OSC 8-lenker (Cmd+klikk åpner). Først branchens åpne PR (`gh pr list --head`), så henvisninger i agentens tittel (`<repo> sak <nr>`, `<repo> PR <nr>`, `issue <nr>`, `repo#<nr>`), så GitHub-lenkene i de siste 3000 linjene av agentpanen. En henvisning i tittelen slås opp i repoet med det navnet hos eierne av GitHub-remotene i tam sine panes, eller uten navn i agentens eget repo. Status og type kommer fra `gh api repos/…/issues/<n>` (også PR-er), og bare `open` vises. En henvisning som står på lenkelinjen, fjernes fra navnet på kortet. Begge kjøres i en bakgrunnsprosess og caches i `~/.local/state/tam/pr/` og `~/.local/state/tam/refs/` (skann høyst hvert 30. sekund, status i 5 minutter). `tmux-init` legger til `terminal-features '*:hyperlinks'`.
 
 En pane er en agent når tam startet den (`@tam_harness`), eller når programmet til en kjent agent kjører i forgrunnen. Da får også en `claude` startet for hånd et agentkort, med statusen hookene setter. Den lagres ikke for restore. Det gjør `tam adopt`.
 
@@ -199,6 +199,7 @@ Formatet på sesjonsfilen er ikke dokumentert. Filer som ikke kan leses, eller s
 | `tam adopt` | Meld inn en ekstern eller avsluttet Claude-sesjon |
 | `tam move [sesjon]` | Flytt gjeldende vindu til en annen sesjon |
 | `tam sidebar` | Flytt fokus til sidebaren, eller tilbake. `--toggle` viser eller skjuler den i alle vinduer. |
+| `tam mcp` | MCP-server over stdio, startet av agentene. `install` / `uninstall` registrerer den hos alle installerte agenter. |
 | `tam --version` | Versjonen. Fra en git-checkout: `<release>+dev.<commit>`, med `.dirty` når sporede filer er endret. |
 | `tam help` | Jukselapp med `tam`- og tmux-versjon: popup inne i tmux, ellers utskrift |
 | `tam setup` | Legg til `source`-linjen i `~/.tmux.conf`, installer Claude-hooken og sjekk avhengigheter |
@@ -221,9 +222,10 @@ Taster:
 | `prefix + S`, `⌥ S` | Vis eller skjul sidebaren i alle vinduer (`tam sidebar --toggle`) |
 | `⌥ q` | `detach-client`, som `prefix + d`. tmux og agentene kjører videre. |
 | `⌥ w` | Lukk vinduet som er markert i sidebaren, etter `confirm-before` (`tam sidebar --close-marked`). Uten sidebar: gjeldende vindu, som `prefix + &`. |
+| `⌥ /` | tmux sin `command-prompt`. Teksten kjøres som `tam <tekst>` i en popup (`tam prompt`), som venter på en tast til slutt. |
 | Klikk (`MouseDown1Pane`) | I en sidebar: sendes videre til `fzf`, og `+ terminal` åpner en terminal. Ellers tmux sin standard. |
 
-`⌥ a`, `⌥ s`, `⌥ S`, `⌥ h`, `⌥ q` og `⌥ w` ligger i root-tabellen (uten prefix) og virker når terminalen sender Option som Meta (iTerm2: Left Option key = Esc+). Tastene får en beskrivelse (`-N "tam: ..."`), så de vises i `prefix + ?`. En tast med tmux sin standardbinding (`s`) erstattes. En tast brukeren selv har bundet til noe annet (f.eks. `h` for vim-navigasjon), overskrives ikke. Jukselappen viser da kommandoen i stedet for tasten.
+`⌥ a`, `⌥ s`, `⌥ S`, `⌥ h`, `⌥ q`, `⌥ w` og `⌥ /` ligger i root-tabellen (uten prefix) og virker når terminalen sender Option som Meta (iTerm2: Left Option key = Esc+). Tastene får en beskrivelse (`-N "tam: ..."`), så de vises i `prefix + ?`. En tast med tmux sin standardbinding (`s`) erstattes. En tast brukeren selv har bundet til noe annet (f.eks. `h` for vim-navigasjon), overskrives ikke. Jukselappen viser da kommandoen i stedet for tasten.
 
 Hver gang `tam` attacher, vises jukselappen som popup. Den lukkes med en vilkårlig tast. Utenfor tmux gjøres det med en engangs-hook på `client-attached`, siden klienten ikke finnes før `tam` har gjort `exec tmux attach`. Popupen tilpasses klientens størrelse (`tam help --client`), fordi tmux uten feilmelding avviser en popup som er større enn terminalen.
 
