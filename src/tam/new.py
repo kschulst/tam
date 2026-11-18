@@ -60,8 +60,13 @@ def new(
     target: str | None = None,
     session_id: str | None = None,
     attach: bool = True,
+    select: bool = True,
 ) -> str:
-    """Create the agent window or split. Returns the tmux session it was created in."""
+    """Create the agent window or split. Returns the tmux session it was created in.
+
+    select=False leaves the client where it is (for tam mcp).
+    """
+    stay = [] if select else ["-d"]
     if harness not in harness_mod.load():
         raise SystemExit(f"tam: unknown agent '{harness}'")
     cwd = cwd or os.getcwd()
@@ -100,6 +105,7 @@ def new(
         tmux(
             "split-window",
             flag,
+            *stay,
             "-t",
             target or f"={session}:",
             "-c",
@@ -110,6 +116,7 @@ def new(
         name = name or _unique_name(session, project, harness)
         tmux(
             "new-window",
+            *stay,
             "-t",
             f"={session}:",
             "-c",
@@ -126,15 +133,27 @@ def new(
     return session
 
 
-def new_terminal(*, cwd: str, split: str | None, target: str | None, attach: bool = True) -> str:
-    """A plain shell in a new window or split. Returns the session."""
+def new_terminal(
+    *,
+    cwd: str,
+    split: str | None,
+    target: str | None,
+    attach: bool = True,
+    select: bool = True,
+) -> str:
+    """A plain shell in a new window or split. Returns the session.
+
+    select=False leaves the client where it is (for tam mcp).
+    """
     target = target or os.environ.get("TMUX_PANE")
+    stay = [] if select else ["-d"]
     if target:
         session = tmux("display-message", "-p", "-t", target, "#{session_name}").strip()
         if split:
-            tmux("split-window", "-h" if split == "h" else "-v", "-t", target, "-c", cwd)
+            flag = "-h" if split == "h" else "-v"
+            tmux("split-window", flag, *stay, "-t", target, "-c", cwd)
         else:
-            tmux("new-window", "-t", f"={session}:", "-c", cwd)
+            tmux("new-window", *stay, "-t", f"={session}:", "-c", cwd)
         return session
     session = session_name(cwd)
     if not server_running() or session not in session_names():

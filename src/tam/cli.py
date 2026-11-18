@@ -135,6 +135,14 @@ def cmd_run(a: argparse.Namespace) -> int:
     )
 
 
+def cmd_mcp(a: argparse.Namespace) -> int:
+    from tam import mcp
+
+    if a.action in ("install", "uninstall"):
+        return mcp.install(uninstall=a.action == "uninstall")
+    return mcp.serve()
+
+
 def cmd_snapshot(_: argparse.Namespace) -> int:
     from tam import state
 
@@ -384,6 +392,15 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--wait", action="store_true")
     s.add_argument("--missing-cwd")
     s.set_defaults(func=cmd_run)
+
+    s = sub.add_parser(
+        "mcp",
+        help="MCP server that lets agents open, close, rename and type into tam's windows",
+        description="Without an action: run the MCP server on stdin/stdout (agents start it). "
+        "install / uninstall: register it with every installed agent.",
+    )
+    s.add_argument("action", nargs="?", choices=["serve", "install", "uninstall"], default="serve")
+    s.set_defaults(func=cmd_mcp)
 
     s = sub.add_parser("snapshot")
     s.set_defaults(func=cmd_snapshot)

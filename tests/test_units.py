@@ -642,6 +642,115 @@ def test_sidebar_rename_to_a_name_starting_with_a_dash(env):  # noqa: F811
     assert tmux("list-windows", "-t", "s1", "-F", "#{window_name}").split() == ["-wip"]
 
 
+def _mcp(*messages: dict, pane: str = "") -> list[dict]:
+    """Run `tam mcp` with these messages on stdin; its responses."""
+    environ = {**os.environ, "TMUX_PANE": pane} if pane else dict(os.environ)
+    out = subprocess.run(
+        [TAM, "mcp"],
+        input="".join(json.dumps(m) + "\n" for m in messages),
+        capture_output=True,
+        text=True,
+        check=True,
+        env=environ,
+    ).stdout
+    return [json.loads(line) for line in out.splitlines()]
+
+
+def _tool(tool: str, /, pane: str = "", **arguments) -> tuple[dict | str, bool]:
+    (response,) = _mcp(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": tool, "arguments": arguments},
+        },
+        pane=pane,
+    )
+    result = response["result"]
+    text = result["content"][0]["text"]
+    return (text if result["isError"] else json.loads(text)), result["isError"]
+
+
+def test_mcp_protocol_lists_the_tools():
+    init, tools = _mcp(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"protocolVersion": "2025-06-18"},
+        },
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},  # no response
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+    )
+    assert init["result"]["protocolVersion"] == "2025-06-18"
+    assert init["result"]["serverInfo"]["name"] == "tam"
+    names = {t["name"] for t in tools["result"]["tools"]}
+    assert names == {
+        "list_windows",
+        "new_agent",
+        "new_terminal",
+        "close_window",
+        "close_session",
+        "rename",
+        "switch_to",
+        "send_text",
+    }
+
+
+def test_mcp_tools_work_on_tams_windows(env):  # noqa: F811
+    tmux("new-session", "-d", "-s", "w", "-n", "me", "-c", str(env / "a"))
+    tmux("new-window", "-d", "-t", "w:", "-n", "other", "-c", str(env / "b"), "cat")
+    me = tmux("list-panes", "-t", "=w:0", "-F", "#{pane_id}").strip()
+
+    listed, _ = _tool("list_windows", pane=me)
+    by_name = {w["name"]: w for w in listed["windows"]}
+    assert by_name["me"]["self"] and not by_name["other"]["self"]
+    other = by_name["other"]["window"]
+
+    started, error = _tool("new_agent", pane=me, agent="fake", dir=str(env / "c"), name="bot")
+    assert not error and started["started"] == "fake"
+    names = tmux("list-windows", "-t", "w", "-F", "#{window_name}").split()
+    assert any(n.endswith(":bot") for n in names)
+    assert tmux("display-message", "-p", "-t", "w:", "#{window_name}").strip() == "me"  # stays
+
+    sent, _ = _tool("send_text", pane=me, window=other, text="hello from mcp")
+    wait_for(lambda: "hello from mcp" in tmux("capture-pane", "-p", "-t", other))
+
+    message, error = _tool("close_window", pane=me, window=by_name["me"]["window"])
+    assert error and "self=true" in message  # your own window needs self=true
+    closed, error = _tool("close_window", pane=me, window=other)
+    assert not error
+    assert "other" not in tmux("list-windows", "-t", "w", "-F", "#{window_name}")
+
+    renamed, _ = _tool("rename", pane=me, name="mine")
+    assert tmux("show-options", "-wqv", "-t", "=w:0", "@tam_named").strip() == "1"
+    message, error = _tool("new_agent", pane=me, agent="nope")
+    assert error and "unknown agent" in message
+
+
+def test_mcp_install_uses_each_agents_own_command(tmp_path, monkeypatch):
+    from tam import mcp
+
+    calls = []
+
+    def run(cmd, **kw):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(mcp.shutil, "which", lambda name: name if name == "claude" else None)
+    monkeypatch.setattr(mcp.subprocess, "run", run)
+    monkeypatch.setattr(mcp.paths, "tam_executable", lambda: "/bin/tam")
+    assert mcp.install() == 0
+    # An earlier registration is removed first, then tam is added, only for claude.
+    assert calls == [
+        ["claude", "mcp", "remove", "--scope", "user", "tam"],
+        ["claude", "mcp", "add", "--scope", "user", "tam", "--", "/bin/tam", "mcp"],
+    ]
+    calls.clear()
+    assert mcp.install(uninstall=True) == 0
+    assert calls == [["claude", "mcp", "remove", "--scope", "user", "tam"]]
+
+
 def test_tmux_default_binding_is_replaced(env):  # noqa: F811
     tmux("new-session", "-d", "-s", "d")
     assert "choose-tree" in tmux("list-keys", "-T", "prefix", "s")
