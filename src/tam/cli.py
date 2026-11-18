@@ -271,7 +271,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--popup-client", help=argparse.SUPPRESS)
     s.set_defaults(func=cmd_new, terminal=True, agent=None, name=None, cycle_agent=None)
 
-    s = sub.add_parser("adopt", help="move a Claude session from outside tam into tam")
+    s = sub.add_parser("adopt", help="move an agent session from outside tam into tam")
     s.add_argument("--finish", nargs=3, help=argparse.SUPPRESS)
     s.set_defaults(func=cmd_adopt)
 
@@ -300,7 +300,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("name", nargs="?")
     s.set_defaults(func=cmd_agent)
 
-    s = sub.add_parser("setup", help="install the tmux config line and the Claude hook")
+    s = sub.add_parser("setup", help="install the tmux config line and the agent hooks")
     s.set_defaults(func=cmd_setup)
 
     s = sub.add_parser("run")
