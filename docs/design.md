@@ -152,19 +152,26 @@ Pane-optionen `@tam_status` har en av disse verdiene:
 
 Status-hookene er rene shell-kommandoer (`tmux set -p -t "$TMUX_PANE" @tam_status ...`) uten Python, fordi `PostToolUse` kjører ved hvert verktøykall. Statusen lagres ikke i `state.json`.
 
-Sidebaren er en pane på 44 kolonner lengst til venstre i hvert vindu. Den kjører `tam sidebar --pane` (`fzf`) og gjenkjennes på startkommandoen. Den viser sesjoner og vinduer. Hvert vindu er et kort med tre linjer:
+Sidebaren er en pane på 44 kolonner lengst til venstre i hvert vindu. Den kjører `tam sidebar --pane` (`fzf`) og gjenkjennes på startkommandoen. Den viser sesjoner og vinduer. Hvert vindu er et kort, og kortet peker på vinduet med vindus-ID-en (`@12`), som ikke endres når vinduer legges til eller flyttes:
 
-1. Navn. Et vindu som heter det samme som skallet (`zsh`, `bash`, ...) og har automatic-rename på, vises med mappenavnet.
-2. Hva som kjører. For en agent er det pane-tittelen (det agenten sier den gjør). For en terminal er det kommandolinjen til programmet i forgrunnen (fra ett `ps`-kall per reload), eller mappen når skallet venter.
+1. Navn. For en agent er det pane-tittelen agenten setter (Claude oppdaterer den når emnet endrer seg), med mindre vinduet har fått nytt navn med `Ctrl+r` (vindus-optionen `@tam_named`, lagret i `state.json`). En tittel som bare er programnavnet, regnes ikke som emne. Et vindu som heter det samme som skallet (`zsh`, `bash`, ...) og har automatic-rename på, vises med mappenavnet.
+2. Hva som kjører. For en agent er det agentnavnet og mappen. For en terminal er det kommandolinjen til programmet i forgrunnen (fra ett `ps`-kall per liste), eller mappen når skallet venter.
 3. Status, antall panes (når det er flere enn én), tid siden aktivitet og git-branch.
+4. Lenker, når det finnes: opptil tre åpne issues og PR-er som OSC 8-lenker (Cmd+klikk åpner). Først branchens åpne PR (`gh pr list --head`), så åpne issues og PR-er blant GitHub-lenkene i de siste 3000 linjene av agentpanen (`gh api repos/…/issues/<n>`, `state` er `open`). Begge kjøres i en bakgrunnsprosess og caches i `~/.local/state/tam/pr/` og `~/.local/state/tam/refs/` (skann høyst hvert 30. sekund, status i 5 minutter). `tmux-init` legger til `terminal-features '*:hyperlinks'`.
 
-Et vindu med flere agentpanes viser den mest presserende statusen (`waiting` før `working`). Enter eller dobbeltklikk kjører `switch-client` til valgt sesjon eller vindu. Linjen for sidebarens eget vindu flytter fokus tilbake til vinduet, og det gjør også Esc. `Ctrl+r` gir nytt navn til linjen. Et klikk på en sesjonslinje (`+ terminal`) åpner et skall i et nytt vindu rett etter agentvinduet, i agentens mappe. Agenten er den i sesjonens gjeldende vindu, ellers den første i sesjonen.
+En pane er en agent når tam startet den (`@tam_harness`), eller når programmet til en kjent agent kjører i forgrunnen. Da får også en `claude` startet for hånd et agentkort, med statusen hookene setter. Den lagres ikke for restore. Det gjør `tam adopt`.
+
+Et vindu med flere agentpanes viser den mest presserende statusen (`waiting` før `working`). Vinduet sidebaren står i (det aktive) har en farget strek og farget navn. Markøren (`fzf` sin markerte linje) flyttes med piltastene og er uavhengig av det aktive vinduet. Et klikk på et kort, eller Enter, kjører `switch-client` til vinduet. Linjen for sidebarens eget vindu flytter fokus tilbake til vinduet, og det gjør også Esc. `Ctrl+r` gir nytt navn til linjen. `⌥ w` lukker vinduet som er markert, etter `confirm-before`. Et klikk på `+ terminal` i en sesjonslinje åpner et skall i et nytt vindu rett etter agentvinduet, i agentens mappe. Agenten er den i sesjonens gjeldende vindu, ellers den første i sesjonen.
+
+`fzf` oppgir hvilken linje et klikk treffer, men ikke kolonnen. tam binder derfor `MouseDown1Pane` i root-tabellen. I en sidebar sendes klikket videre til `fzf` (`send-keys -M`), og `tam sidebar --mouse` kjøres med ordet og linjen under musen (`#{mouse_word}`, `#{mouse_line}`). Er ordet `+` eller `terminal`, leser tam sesjonen fra linjen `fzf` har markert, over socketen. Andre panes beholder tmux sin standardbinding, og en binding brukeren har satt selv, erstattes ikke.
+
+Hver sidebar sin `fzf` lytter på en unix-socket (`--listen`) ved siden av tmux sin socket, i en katalog bare brukeren har tilgang til. tmux-hooks på indeks 44 (`session-window-changed`, `client-session-changed`) kjører `tam sidebar --refocus`, som sender `clear-query+pos(n)` til sidebaren i vinduet som ble aktivt, slik at den markerer sitt eget kort. `⌥ w` leser den markerte linjen med `GET`.
 
 Sidebaren vises eller skjules i alle vinduer samtidig: `sidebar = "shown"` eller `"hidden"` i `config.toml`, speilet i tmux-optionen `@tam_sidebar_shown`. Standard er `shown`. tmux-hooks på indeks 43 (`after-new-window`, `session-created`, `client-resized`, `window-resized`, `pane-exited`, `after-kill-pane`) kjører `tam sidebar --ensure` når optionen og `@tam_restored` er satt. `--ensure` legger sidebaren til der den mangler, setter bredden tilbake til 44, fjerner den når den er skjult, og lukker et vindu der bare sidebaren er igjen. Etter lukking venter den to sekunder, som snapshot. Ellers ville vinduer kunne lagres som borte under en shutdown. Sidebaren lagres i `state.json` som en pane med `"sidebar": true`, slik at layouten passer ved restore. Etter restore kjøres `--ensure`.
 
-En synlig sidebar laster inn på nytt hvert 2. sekund (`fzf` `every(2)`), med `--track --id-nth 1`, slik at markøren blir på samme linje. En sidebar i et vindu ingen klient viser, bruker ett tmux-kall per tick og laster ikke inn. Mens sidebaren har fokus, beholder vinduet navnet sitt. Det gjøres med en `automatic-rename-format` per vindu som leser pane-optionen `@tam_sidebar`.
+Hvert 2. sekund bygger en synlig sidebar lista i bakgrunnen (`fzf` `every(2)` med `bg-transform`, `tam sidebar --tick`), og laster inn på nytt bare når lista eller headeren er endret. Lista leses da fra en fil i `~/.local/state/tam/sidebar/`. `transform` er synkron i `fzf`, og en reload på omtrent 240 ms hvert 2. sekund gjorde at klikk gikk tapt. `--track --id-nth 1` holder markøren på samme linje. En sidebar i et vindu ingen klient viser, bruker ett tmux-kall per tick og bygger ingen liste. `tam tmux-init` starter alle sidebarer på nytt (`respawn-pane -k`), fordi `fzf` leser bindingene sine bare ved oppstart. Mens sidebaren har fokus, beholder vinduet navnet sitt. Det gjøres med en `automatic-rename-format` per vindu som leser pane-optionen `@tam_sidebar`.
 
-Bunnfeltet i sidebaren er en lukkeknapp for linjen som er markert: `[ ✕ close <vindu> ]` eller `[ ✕ close session <navn> (N windows) ]`. Første klikk (eller `Ctrl+x`) endrer teksten til `click again to close ...`, og andre klikk lukker med `kill-window` eller `kill-session`. Hvis du flytter til en annen linje, nullstilles knappen. Den aktiverte linjen lagres i `~/.local/state/tam/sidebar-armed`, fordi hver `fzf`-handling kjører i en ny prosess. Lukkes sesjonen klienten står i, flyttes klienten først til en annen sesjon, ellers ville tmux koblet den fra. `fzf` oppgir bare kolonnen for klikk i topp- og bunnfeltet, og derfor er det én knapp nederst og ikke et kryss på hver linje.
+`Ctrl+x` i sidebaren lukker linjen som er markert, i to trykk: det første setter bunnfeltet til `✕ Ctrl+x again to close ...`, og det andre lukker med `kill-window` eller `kill-session`. Hvis du flytter til en annen linje, nullstilles det. Den aktiverte linjen lagres i `~/.local/state/tam/sidebar-armed`, fordi hver `fzf`-handling kjører i en ny prosess. Lukkes sesjonen klienten står i, flyttes klienten først til en annen sesjon, ellers ville tmux koblet den fra.
 
 ### `tam adopt`
 
@@ -207,14 +214,16 @@ Taster:
 |---|---|
 | `prefix + a`, `⌥ a` | Velg mappe i en `fzf`-popup og start standardagenten der: Enter i nytt vindu, `Ctrl+v` split til høyre, `Ctrl+s` split under |
 | `prefix + t`, `⌥ t` | Samme velger for en vanlig terminal uten agent (`tam term`). Erstatter tmux sin `clock-mode` på `t`. |
-| `prefix + A` | `tam new claude --split h` |
+| `prefix + A` | `tam new --split h`: standardagenten i en split |
 | `prefix + h`, `⌥ h` | Jukselappen i en popup (`tam help`) |
 | `prefix + .` | Flytt vinduet til en annen sesjon, valgt i en `fzf`-popup (`tam move`). Et nytt navn lager sesjonen. Flyttes det siste vinduet ut av en sesjon, følger klienten med. Erstatter tmux sin standard `move-window`-prompt. |
 | `prefix + s`, `⌥ s` | Fokus til sidebaren, og tilbake (`tam sidebar`). En skjult sidebar vises først. Erstatter tmux sin standard `choose-tree -Zs`. |
 | `prefix + S`, `⌥ S` | Vis eller skjul sidebaren i alle vinduer (`tam sidebar --toggle`) |
 | `⌥ q` | `detach-client`, som `prefix + d`. tmux og agentene kjører videre. |
+| `⌥ w` | Lukk vinduet som er markert i sidebaren, etter `confirm-before` (`tam sidebar --close-marked`). Uten sidebar: gjeldende vindu, som `prefix + &`. |
+| Klikk (`MouseDown1Pane`) | I en sidebar: sendes videre til `fzf`, og `+ terminal` åpner en terminal. Ellers tmux sin standard. |
 
-`⌥ a`, `⌥ s`, `⌥ S`, `⌥ h` og `⌥ q` ligger i root-tabellen (uten prefix) og virker når terminalen sender Option som Meta (iTerm2: Left Option key = Esc+). Tastene får en beskrivelse (`-N "tam: ..."`), så de vises i `prefix + ?`. En tast med tmux sin standardbinding (`s`) erstattes. En tast brukeren selv har bundet til noe annet (f.eks. `h` for vim-navigasjon), overskrives ikke. Jukselappen viser da kommandoen i stedet for tasten.
+`⌥ a`, `⌥ s`, `⌥ S`, `⌥ h`, `⌥ q` og `⌥ w` ligger i root-tabellen (uten prefix) og virker når terminalen sender Option som Meta (iTerm2: Left Option key = Esc+). Tastene får en beskrivelse (`-N "tam: ..."`), så de vises i `prefix + ?`. En tast med tmux sin standardbinding (`s`) erstattes. En tast brukeren selv har bundet til noe annet (f.eks. `h` for vim-navigasjon), overskrives ikke. Jukselappen viser da kommandoen i stedet for tasten.
 
 Hver gang `tam` attacher, vises jukselappen som popup. Den lukkes med en vilkårlig tast. Utenfor tmux gjøres det med en engangs-hook på `client-attached`, siden klienten ikke finnes før `tam` har gjort `exec tmux attach`. Popupen tilpasses klientens størrelse (`tam help --client`), fordi tmux uten feilmelding avviser en popup som er større enn terminalen.
 

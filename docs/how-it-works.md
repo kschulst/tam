@@ -41,7 +41,13 @@ The sidebar is a pane running `tam sidebar --pane` (fzf) on the left of every wi
 
 Showing or hiding is one setting for all windows: `sidebar = "shown"` or `"hidden"` in `config.toml`, copied to the tmux option `@tam_sidebar_shown`. After a new window, a new session, a resize or a closed pane, a tmux hook runs `tam sidebar --ensure`: it adds the sidebar to windows without one, sets its width back to 44 columns, removes it everywhere when hidden, and closes a window with only its sidebar left. The hooks check the option in tmux first, so with the sidebar hidden no Python runs. After a closed pane, `--ensure` waits two seconds, for the same reason as saving does (see [Shutdown](#shutdown)).
 
-A visible sidebar reloads every 2 seconds. A sidebar in a window no client shows checks that with one tmux call and does not reload. The command a terminal pane runs comes from one `ps` call per reload, because tmux gives only the program's name.
+Every 2 seconds a visible sidebar builds its list in the background (fzf's `bg-transform`) and reloads only when the list changed, from a file in `~/.local/state/tam/sidebar/`. fzf does not block clicks and keys while the list is built. A sidebar in a window no client shows checks that with one tmux call and does nothing more. The command a terminal pane runs comes from one `ps` call per list, because tmux gives only the program's name. `tam tmux-init` restarts every sidebar (`respawn-pane`), because fzf reads its bindings only when it starts.
+
+Each sidebar's fzf listens on a unix socket next to tmux's own socket, in a directory only the user can open. When a window becomes the current one, a tmux hook runs `tam sidebar --refocus`, which sends `pos(n)` there so the sidebar marks the window's own card. `⌥ w` reads the marked line over the same socket (`GET`).
+
+fzf reports which line a click hits, not where on it. A click in a sidebar therefore goes to tmux's `MouseDown1Pane` binding too: it passes the click on to fzf and runs `tam sidebar --mouse` with the word under the mouse (`#{mouse_word}`), so a click on `+ terminal` opens a terminal and a click elsewhere on the line does not. Other panes keep tmux's default binding, and a binding the user set is not replaced.
+
+An agent's card is named after the pane title the agent sets, unless the window was renamed with `Ctrl+r` (window option `@tam_named`, saved in `state.json`). A pane counts as an agent when tam started it or when a known agent's program runs in it, so a `claude` started by hand gets an agent's card as well. The links line has the branch's open PR (`gh pr list`) and the open issues and PRs among the GitHub links in the last 3000 lines of the agent pane (`gh api …/issues/<n>`). Both run in a background process and are cached in `~/.local/state/tam/pr/` and `~/.local/state/tam/refs/`, so a reload never waits for GitHub.
 
 ## Restoring
 

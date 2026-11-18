@@ -41,11 +41,18 @@ tam
 | `⌥ S` | Show or hide the sidebar in every window |
 | `⌥ h` | Cheat sheet |
 | `⌥ q` | Quit tam. tmux and the agents keep running; `tam` attaches again. |
+| `⌥ w` | Close the window marked in the sidebar, after asking |
 | `Ctrl+b → .` | Move the window to another session |
 
-Every key except `⌥ q` also works as `Ctrl+b` followed by the letter (`⌥ q` is tmux's own `Ctrl+b → d`). The `⌥` keys need Option to send Meta (iTerm2: Profiles → Keys → Left Option key: Esc+).
+Every key except `⌥ q` and `⌥ w` also works as `Ctrl+b` followed by the letter (`⌥ q` and `⌥ w` are tmux's own `Ctrl+b → d` and `Ctrl+b → &`). The `⌥` keys need Option to send Meta (iTerm2: Profiles → Keys → Left Option key: Esc+).
 
-The sidebar is a column on the left of every window. It lists sessions and windows, with each agent's status (`working`, `waiting`), what runs in each window and its git branch. Enter or a double click goes to a window, `Ctrl+r` renames, `Ctrl+x` closes, and `+ terminal` on a session's line opens a terminal in the directory of that session's agent.
+The sidebar is a column on the left of every window. It lists sessions and windows:
+
+- An agent's card is named after what the agent is working on (the title it sets, such as Claude's), with its status: `working` or `waiting` for you.
+- A terminal's card shows the program running in it, or its directory.
+- Each card has the git branch, and links to up to three open issues and pull requests: the branch's own, then the ones the agent has shown. Cmd+click opens one. This needs [gh](https://cli.github.com).
+- The window you are in has a coloured bar. One click on a card goes to that window; the arrow keys mark a card without going there, and `⌥ w` closes the marked one.
+- `+ terminal` on a session's line opens a terminal in the directory of that session's agent. `Ctrl+r` renames.
 
 Already have Claude running in a plain terminal? Type `! tam adopt` in it, and it moves into tam.
 
