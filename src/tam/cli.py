@@ -172,17 +172,47 @@ def cmd_sidebar(a: argparse.Namespace) -> int:
     from tam import sidebar
     from tam.tmux import tmux
 
-    if a.footer:
-        print(sidebar.footer(a.footer))
+    # The fzf actions pass the focused line as {1}, which is '' when no line
+    # matches. Such a call prints no action instead of falling through to popup().
+    if a.footer is not None:
+        print(sidebar.footer(a.footer) if a.footer else "")
         return 0
-    client = a.client or tmux("display-message", "-p", "#{client_name}").strip()
-    if a.click:
-        print(sidebar.click(client, a.click, paths.tam_executable()))
+    if a.header:
+        print(sidebar.header(sidebar.pane_rows()))
+        return 0
+    if a.pane:
+        return sidebar.run_pane()
+    if a.ensure:
+        sidebar.ensure()
+        return 0
+    if a.toggle:
+        sidebar.toggle()
+        return 0
+    # A sidebar pane has no client of its own: tmux picks the one showing its session.
+    client = a.client or tmux("display-message", "-p", "#{client_name}", check=False).strip()
+    if a.click is not None:
+        if a.click:
+            print(sidebar.click(client, a.click, paths.tam_executable()))
+        return 0
+    if a.line_click is not None:
+        if a.line_click:
+            print(sidebar.line_click(client, a.line_click, paths.tam_executable()))
+        return 0
+    if a.rename is not None:
+        if a.rename:
+            print(sidebar.rename_start(a.rename))
+        return 0
+    if a.enter is not None:
+        print(sidebar.enter(client, a.enter, a.name or "", paths.tam_executable()))
+        return 0
+    if a.escape:
+        print(sidebar.escape())
         return 0
     if a.list:
-        print("\n".join(sidebar.list_lines(client)[0]))
+        sys.stdout.write("\0".join(sidebar.list_lines(client)[0]))
         return 0
-    return sidebar.pick(client) if a.pick else sidebar.popup(client)
+    sidebar.focus(client)
+    return 0
 
 
 def cmd_move(a: argparse.Namespace) -> int:
@@ -281,12 +311,22 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--client", help=argparse.SUPPRESS)
     s.set_defaults(func=cmd_help)
 
-    s = sub.add_parser("sidebar", help="list sessions and agents, switch with Enter")
+    s = sub.add_parser("sidebar", help="move focus to the sidebar, or back from it")
+    s.add_argument(
+        "--toggle", action="store_true", help="show the sidebar in every window, or hide it"
+    )
     s.add_argument("--client", help=argparse.SUPPRESS)
-    s.add_argument("--pick", action="store_true", help=argparse.SUPPRESS)
+    s.add_argument("--pane", action="store_true", help=argparse.SUPPRESS)
+    s.add_argument("--ensure", action="store_true", help=argparse.SUPPRESS)
     s.add_argument("--list", action="store_true", help=argparse.SUPPRESS)
     s.add_argument("--footer", help=argparse.SUPPRESS)
     s.add_argument("--click", help=argparse.SUPPRESS)
+    s.add_argument("--rename", help=argparse.SUPPRESS)
+    s.add_argument("--enter", help=argparse.SUPPRESS)
+    s.add_argument("--escape", action="store_true", help=argparse.SUPPRESS)
+    s.add_argument("--header", action="store_true", help=argparse.SUPPRESS)
+    s.add_argument("--line-click", help=argparse.SUPPRESS)
+    s.add_argument("--name", help=argparse.SUPPRESS)
     s.set_defaults(func=cmd_sidebar)
 
     s = sub.add_parser("move", help="move the current window to another session")

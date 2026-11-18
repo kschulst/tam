@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 from tam import paths
+from tam.sidebar import PANE_COMMAND, is_sidebar
 from tam.tmux import query, session_names, tmux
 
 RESTORED_FLAG = "@tam_restored"
@@ -26,6 +27,7 @@ PANE_FIELDS = [
     "pane_index",
     "pane_active",
     "pane_current_path",
+    "pane_start_command",
     "@tam_harness",
     "@tam_name",
     "@tam_args",
@@ -68,7 +70,10 @@ def capture() -> dict:
             "active": r["pane_active"] == "1",
             "agent": None,
         }
-        if r["@tam_harness"]:
+        # Saved like any pane, so the window layout keeps its column on restore.
+        if is_sidebar(r["pane_start_command"]):
+            pane["sidebar"] = True
+        elif r["@tam_harness"]:
             pane["agent"] = {
                 "harness": r["@tam_harness"],
                 "name": r["@tam_name"],
@@ -174,6 +179,11 @@ def restore(tam_exe: str, fallback_session: str, cwd: str) -> str:
         tmux("new-session", "-d", "-s", fallback_session, "-c", cwd)
         names = {fallback_session}
     tmux("set-option", "-g", RESTORED_FLAG, "1")
+    # Saved sidebars come back with their windows; add or remove them per the setting.
+    from tam import sidebar
+
+    sidebar.sync_option()
+    sidebar.ensure()
     snapshot()
     if last in names:
         return last
@@ -196,6 +206,8 @@ def layout_size(layout: str) -> tuple[int, int] | None:
 
 
 def _pane_command(pane: dict, tam_exe: str, cwd_missing: str | None) -> list[str]:
+    if pane.get("sidebar"):
+        return [tam_exe, *PANE_COMMAND.split()]
     agent = pane.get("agent")
     if not agent:
         return []

@@ -32,6 +32,8 @@ def env(tmp_path, monkeypatch):
     home = tmp_path / "home"
     (home / ".config" / "tam").mkdir(parents=True)
     (home / ".config" / "tam" / "harnesses.toml").write_text(FAKE_HARNESS)
+    # Sidebar panes would change every pane count; the sidebar tests turn it on.
+    (home / ".config" / "tam" / "config.toml").write_text('sidebar = "hidden"\n')
     sock = Path("/tmp") / f"tam-test-{os.getpid()}-{tmp_path.name}"
     sock.mkdir()
     for k in ("TMUX", "TMUX_PANE"):
@@ -157,6 +159,37 @@ def test_reboot_roundtrip(env):
     # Saving is enabled again after restore and includes the scratch session.
     tam("snapshot")
     assert {s["name"] for s in load_state(env)["sessions"]} == {"scratch", "work"}
+
+
+def test_reboot_keeps_the_sidebar_column(env):
+    config = env / "home" / ".config" / "tam" / "config.toml"
+    config.write_text('sidebar = "shown"\n')
+    tmux("new-session", "-d", "-s", "work", "-x", "200", "-y", "50", "-c", str(env / "a"))
+    tam("tmux-init")
+    tmux("split-window", "-h", "-t", "=work:0.1", "-c", str(env / "b"))
+    tam("snapshot")
+
+    def panes():
+        out = tmux("list-panes", "-t", "=work:0", "-F", "#{pane_width}|#{pane_start_command}")
+        rows = (ln.split("|", 1) for ln in out.splitlines())
+        return [(w, "sidebar --pane" in cmd) for w, cmd in rows]
+
+    before = panes()
+    assert [s for _, s in before] == [True, False, False]
+    saved = load_state(env)["sessions"][0]["windows"][0]["panes"]
+    assert [p.get("sidebar", False) for p in saved] == [True, False, False]
+
+    tmux("kill-server")
+    time.sleep(0.5)
+    subprocess.run([TAM, "--no-attach"], check=True, cwd=env / "home")
+    assert panes() == before
+
+    # Hidden at restore time: the saved sidebar is removed again.
+    tmux("kill-server")
+    time.sleep(0.5)
+    config.write_text('sidebar = "hidden"\n')
+    subprocess.run([TAM, "--no-attach"], check=True, cwd=env / "home")
+    assert [s for _, s in panes()] == [False, False]
 
 
 def test_agent_exit_prompts_and_resumes(env):

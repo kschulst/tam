@@ -10,7 +10,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from tam import paths
+from tam import paths, sidebar
 from tam.state import RESTORED_FLAG
 from tam.tmux import server_running, tmux
 
@@ -41,6 +41,16 @@ SNAPSHOT_HOOKS = [
 CLOSE_HOOKS = {"pane-exited", "after-kill-pane", "session-closed"}
 CLOSE_DELAY = 2
 
+# Events after which `tam sidebar --ensure` adds, removes or resizes sidebar panes.
+# After a close it waits like the snapshot does: closing a window that has only
+# its sidebar left would otherwise save that window as gone during shutdown.
+SIDEBAR_HOOK_INDEX = 43
+# window-resized covers a window that gets its size from the first client to show
+# it, e.g. one created by tam adopt with no client attached: tmux scales the
+# sidebar with the window.
+SIDEBAR_HOOKS = ["after-new-window", "session-created", "client-resized", "window-resized"]
+SIDEBAR_CLOSE_HOOKS = ["pane-exited", "after-kill-pane"]
+
 # Settings Claude Code needs for keys, notifications and clipboard.
 CLAUDE_SETTINGS = [
     ("extended-keys", "on"),
@@ -66,6 +76,7 @@ def key_bindings(exe: str) -> list[list[str]]:
         " --dir #{q:pane_current_path}",
     ]
     sidebar = ["run-shell", "-b", f"{exe} sidebar --client '#{{client_name}}'"]
+    toggle_sidebar = ["run-shell", "-b", f"{exe} sidebar --toggle"]
     new_terminal = [
         "run-shell",
         "-b",
@@ -89,6 +100,8 @@ def key_bindings(exe: str) -> list[list[str]]:
         ["root", "M-q", "tam: quit (detach; agents keep running)", "detach-client"],
         ["prefix", "s", "tam: sessions and agents", *sidebar],
         ["root", "M-s", "tam: sessions and agents", *sidebar],
+        ["prefix", "S", "tam: show or hide the sidebar", *toggle_sidebar],
+        ["root", "M-S", "tam: show or hide the sidebar", *toggle_sidebar],
         [
             "prefix",
             ".",
@@ -238,12 +251,26 @@ def tmux_init() -> int:
         delay = f"sleep {CLOSE_DELAY}; " if hook in CLOSE_HOOKS else ""
         tmux("set-hook", "-g", f"{hook}[{HOOK_INDEX}]", f"run-shell -b '{delay}{exe} snapshot'")
 
+    # Python runs only when the sidebar is shown and the server is restored.
+    when = f"#{{&&:#{{{sidebar.SHOWN_OPTION}}},#{{{RESTORED_FLAG}}}}}"
+    for hook in SIDEBAR_HOOKS + SIDEBAR_CLOSE_HOOKS:
+        delay = f"sleep {CLOSE_DELAY}; " if hook in SIDEBAR_CLOSE_HOOKS else ""
+        tmux(
+            "set-hook",
+            "-g",
+            f"{hook}[{SIDEBAR_HOOK_INDEX}]",
+            f"if-shell -F '{when}' \"run-shell -b '{delay}{exe} sidebar --ensure'\"",
+        )
+
     for table, key, note, *command in key_bindings(exe):
         _bind(table, key, note, command)
 
     # Without saved state there is nothing to restore, so saving can start now.
     if not paths.state_file().exists():
         tmux("set-option", "-g", RESTORED_FLAG, "1")
+    sidebar.sync_option()
+    if tmux("show-options", "-gqv", RESTORED_FLAG, check=False).strip() == "1":
+        sidebar.ensure()
     return 0
 
 
