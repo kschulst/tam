@@ -51,6 +51,16 @@ def _keys(prefix: str, key: str) -> str:
     return with_prefix
 
 
+def _quit_keys(prefix: str) -> str:
+    """⌥ q when tam owns it, plus tmux's own prefix + d."""
+    from tam.setup import tam_key
+
+    detach = f"{prefix} → d"
+    if server_running() and tam_key("M-q", "root"):
+        return f"⌥ q · {detach}"
+    return detach
+
+
 def _option_note(client: str | None) -> str:
     """Which Option key the ⌥ shortcuts need in iTerm2, when it is not the left one."""
     from tam.setup import iterm_option_keys
@@ -85,13 +95,13 @@ def text(closing_hint: bool = False, client: str | None = None) -> str:
         ("tam adopt", "take over a Claude running outside tmux"),
         ("! tam adopt", "same, typed inside that Claude session"),
         ("tmux", None),
+        (_quit_keys(p), "quit tam (agents keep running; tam attaches again)"),
         (_keys(p, "s") or "tam sidebar", "sessions and agents, switch with Enter"),
         (_key(p, ".") or "tam move", "move window to another session"),
         (f"{p} → w", "tmux tree of sessions and windows"),
         (f"{p} → n / p", "next / previous window"),
         (f"{p} → arrow", "move between panes"),
         (f"{p} → z", "zoom the pane (again to unzoom)"),
-        (f"{p} → d", "detach (tmux keeps running)"),
         ("After a reboot", None),
         ("tam", "restore and attach"),
     ]

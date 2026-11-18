@@ -244,6 +244,12 @@ def test_version_in_a_checkout_names_the_commit(tmp_path):
     assert tam_version(tmp_path) == f"{__version__}+dev.{commit}.dirty"
 
 
+def test_option_q_detaches(env):  # noqa: F811
+    tmux("new-session", "-d", "-s", "q")
+    subprocess.run([TAM, "tmux-init"], check=True)
+    assert "detach-client" in tmux("list-keys", "-T", "root", "M-q")
+
+
 def test_tmux_default_binding_is_replaced(env):  # noqa: F811
     tmux("new-session", "-d", "-s", "d")
     assert "choose-tree" in tmux("list-keys", "-T", "prefix", "s")

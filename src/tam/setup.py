@@ -86,6 +86,7 @@ def key_bindings(exe: str) -> list[list[str]]:
         ["root", "M-t", "tam: new terminal (pick directory)", *new_terminal],
         ["prefix", "h", "tam: cheat sheet", *popup_command(exe)],
         ["root", "M-h", "tam: cheat sheet", *popup_command(exe)],
+        ["root", "M-q", "tam: quit (detach; agents keep running)", "detach-client"],
         ["prefix", "s", "tam: sessions and agents", *sidebar],
         ["root", "M-s", "tam: sessions and agents", *sidebar],
         [
