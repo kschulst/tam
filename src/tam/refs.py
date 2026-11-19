@@ -165,12 +165,71 @@ def _candidates(repo: str, repos: list[tuple[str, str]]) -> list[tuple[str, str]
     return [(owner, repo) for owner in owners]
 
 
+# Bytes read from the end of a Claude transcript.
+TRANSCRIPT_BYTES = 1024 * 1024
+
+
+def claude_transcript(pane: str) -> Path | None:
+    """The transcript of the Claude session in pane, if one runs there.
+
+    The id is the pane's @tam_session_id (tam started it), else that of the Claude
+    process on the pane's tty (Claude Code's ~/.claude/sessions/<pid>.json).
+    """
+    from tam.tmux import tmux
+
+    out = tmux(
+        "display-message",
+        "-p",
+        "-t",
+        pane,
+        "#{@tam_harness}\t#{@tam_session_id}\t#{pane_tty}",
+        check=False,
+    ).rstrip("\n")  # empty fields lead
+    harness, sid, tty = (out.split("\t") + ["", "", ""])[:3]
+    if harness != "claude" or not sid:
+        from tam.adopt import claude_registry
+
+        registry = claude_registry()
+        procs = subprocess.run(
+            ["ps", "-o", "pid=,tty=", "-p", ",".join(map(str, registry)) or "0"],
+            capture_output=True,
+            text=True,
+        ).stdout
+        tty = tty.removeprefix("/dev/")
+        on_tty = [
+            int(p)
+            for p, t in (line.split() for line in procs.splitlines() if line.strip())
+            if t == tty
+        ]
+        sid = next((registry[p]["session_id"] for p in on_tty if p in registry), "")
+    if not sid:
+        return None
+    return next((paths.claude_dir() / "projects").glob(f"*/{sid}.jsonl"), None)
+
+
+def _tail(path: Path, size: int) -> str:
+    try:
+        with path.open("rb") as f:
+            f.seek(max(0, path.stat().st_size - size))
+            return f.read().decode(errors="ignore")
+    except OSError:
+        return ""
+
+
 def refresh(pane: str) -> None:
-    """Scan the pane's scrollback and title; write its open issues and PRs (in the background)."""
+    """Scan the pane's scrollback and title; write its open issues and PRs (in the background).
+
+    Claude Code draws on the alternate screen, which has no scrollback, so for a
+    Claude pane the end of its transcript is read too: the links Claude wrote and
+    the PRs it opened (`pr-link`). The transcript counts as newer than the screen.
+    """
     from tam.tmux import tmux
 
     now = time.time()
     text = tmux("capture-pane", "-p", "-J", "-S", f"-{SCROLLBACK}", "-t", pane, check=False)
+    transcript = claude_transcript(pane)
+    if transcript:
+        text += "\n" + _tail(transcript, TRANSCRIPT_BYTES)
     found = [(o, r, n) for o, r, _, n in links_in(text)]
     title = tmux("display-message", "-p", "-t", pane, "#{pane_title}", check=False).strip()
     references = title_refs(title)

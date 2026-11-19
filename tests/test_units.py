@@ -491,6 +491,31 @@ def test_refs_from_scrollback_keep_only_open_ones(env, monkeypatch):  # noqa: F8
     assert found[0]["url"] == "https://github.com/o/r/pull/3"
 
 
+def test_refs_of_a_claude_pane_come_from_its_transcript(env, monkeypatch):  # noqa: F811
+    from tam import refs
+
+    # Claude Code draws on the alternate screen: the pane has no scrollback to scan.
+    claude = env / "claude"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude))
+    project = claude / "projects" / "-x"
+    project.mkdir(parents=True)
+    (project / "s1.jsonl").write_text(
+        json.dumps(
+            {"type": "assistant", "message": {"content": "see https://github.com/o/r/issues/7"}}
+        )
+        + "\n"
+        + json.dumps({"type": "pr-link", "prUrl": "https://github.com/o/r/pull/8", "prNumber": 8})
+        + "\n"
+    )
+    pane = tmux("new-session", "-d", "-P", "-F", "#{pane_id}", "sleep 100").strip()
+    tmux("set-option", "-p", "-t", pane, "@tam_harness", "claude")
+    tmux("set-option", "-p", "-t", pane, "@tam_session_id", "s1")
+    monkeypatch.setattr(refs, "_state", lambda o, r, n, now: ("open", "pr" if n == 8 else "issue"))
+    refs.refresh(pane)
+    found = refs._read(refs._pane_file(pane))["refs"]
+    assert [(r["kind"], r["number"]) for r in found] == [("pr", 8), ("issue", 7)]  # newest first
+
+
 def test_refs_from_the_agents_title(env, monkeypatch):  # noqa: F811
     from tam import refs
 
