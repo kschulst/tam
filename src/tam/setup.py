@@ -354,13 +354,34 @@ def _status_command(status: str) -> str:
     )
 
 
-CLAUDE_HOOKS = {
-    "SessionStart": "command -v tam >/dev/null 2>&1 && tam hook claude || true",
-    "UserPromptSubmit": _status_command("working"),
-    "PostToolUse": _status_command("working"),
-    "Stop": _status_command("waiting"),
-    "Notification": _status_command("waiting"),
-}
+# Agent status on the sidebar cards:
+#   working  Claude is busy.
+#   waiting  Claude cannot go on without you: a permission prompt, a question
+#            (AskUserQuestion, or a turn that ends with one), a plan to approve,
+#            or an MCP server asking for input.
+#   idle     The turn is done.
+# After you allow a tool, no hook fires until it has run (PostToolUse), so a long
+# command you allowed shows waiting until it is done.
+_WAITING_TOOLS = "AskUserQuestion|ExitPlanMode"
+
+# (event, matcher or None, command)
+CLAUDE_HOOKS: list[tuple[str, str | None, str]] = [
+    ("SessionStart", None, "command -v tam >/dev/null 2>&1 && tam hook claude || true"),
+    ("UserPromptSubmit", None, _status_command("working")),
+    ("PostToolUse", None, _status_command("working")),
+    ("PostToolUseFailure", None, _status_command("working")),
+    ("PreToolUse", _WAITING_TOOLS, _status_command("waiting")),
+    ("PermissionRequest", None, _status_command("waiting")),
+    ("Elicitation", None, _status_command("waiting")),
+    ("ElicitationResult", None, _status_command("working")),
+    # Python only inside tmux: it reads the last message to see if it asks you something.
+    (
+        "Stop",
+        None,
+        '[ -n "$TMUX_PANE" ] && command -v tam >/dev/null 2>&1 && tam hook claude-stop || true',
+    ),
+    ("StopFailure", None, _status_command("idle")),
+]
 
 
 def _is_tam_command(command: str) -> bool:
@@ -368,23 +389,44 @@ def _is_tam_command(command: str) -> bool:
 
 
 def install_claude_hook(settings_path: Path) -> bool:
-    """Add or update tam's Claude Code hooks. Returns True if the file changed."""
+    """Add or update tam's Claude Code hooks. Returns True if the file changed.
+
+    tam's hooks are recognised by their command, so earlier versions' hooks are
+    replaced and those of events tam no longer uses are removed.
+    """
     data = json.loads(settings_path.read_text()) if settings_path.exists() else {}
     hooks = data.setdefault("hooks", {})
+    wanted: dict[str, list[tuple[str | None, str]]] = {}
+    for event, matcher, command in CLAUDE_HOOKS:
+        wanted.setdefault(event, []).append((matcher, command))
     changed = False
-    for event, command in CLAUDE_HOOKS.items():
+    for event in sorted(set(hooks) | set(wanted)):
         groups = hooks.setdefault(event, [])
-        existing = [
-            h for g in groups for h in g.get("hooks", []) if _is_tam_command(h.get("command", ""))
-        ]
-        if existing and all(h["command"] == command for h in existing):
+        existing = sorted(
+            (
+                (g.get("matcher"), h.get("command", ""))
+                for g in groups
+                for h in g.get("hooks", [])
+                if _is_tam_command(h.get("command", ""))
+            ),
+            key=str,
+        )
+        if existing == sorted(wanted.get(event, []), key=str):
+            if not groups:
+                del hooks[event]
             continue
         for g in groups:
             g["hooks"] = [
                 h for h in g.get("hooks", []) if not _is_tam_command(h.get("command", ""))
             ]
         groups[:] = [g for g in groups if g.get("hooks")]
-        groups.append({"hooks": [{"type": "command", "command": command}]})
+        for matcher, command in wanted.get(event, []):
+            group: dict = {"hooks": [{"type": "command", "command": command}]}
+            if matcher:
+                group = {"matcher": matcher, **group}
+            groups.append(group)
+        if not groups:
+            del hooks[event]
         changed = True
     if not changed:
         return False

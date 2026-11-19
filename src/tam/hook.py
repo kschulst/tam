@@ -41,7 +41,7 @@ def record_session(session_id: str) -> None:
         return
     set_pane_option(pane, "@tam_session_id", session_id)
     set_pane_option(pane, "@tam_started", "1")
-    set_pane_option(pane, "@tam_status", "waiting")
+    set_pane_option(pane, "@tam_status", "idle")
     state.snapshot()
 
 
@@ -66,6 +66,28 @@ def claude() -> int:
                 )
             )
         record_session(session_id)
+    except Exception as e:  # a hook must never break the agent
+        print(f"tam hook: {e}", file=sys.stderr)
+    return 0
+
+
+def asks_you(message: str) -> bool:
+    """True if a turn's last message ends with a question to you.
+
+    A heuristic: the last line, without markdown around it, ends with "?".
+    """
+    lines = [line.strip() for line in message.splitlines() if line.strip()]
+    return bool(lines) and lines[-1].rstrip("*_`)] ").endswith("?")
+
+
+def claude_stop() -> int:
+    """Claude Code Stop hook: status waiting if the turn ends with a question, else idle."""
+    try:
+        pane = os.environ.get("TMUX_PANE")
+        data = json.load(sys.stdin)
+        message = data.get("last_assistant_message") or ""
+        if pane:
+            set_pane_option(pane, "@tam_status", "waiting" if asks_you(message) else "idle")
     except Exception as e:  # a hook must never break the agent
         print(f"tam hook: {e}", file=sys.stderr)
     return 0

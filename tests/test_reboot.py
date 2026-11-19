@@ -209,7 +209,7 @@ def test_agent_exit_prompts_and_resumes(env):
 
     assert status() == "running"
     tam("hook", "session", "abc", TMUX_PANE=agent)
-    assert status() == "waiting"
+    assert status() == "idle"
     tmux("send-keys", "-t", agent, "C-c")
     wait_for(lambda: "exited" in capture(agent))
     assert status() == "exited"

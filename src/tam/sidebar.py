@@ -27,11 +27,15 @@ PANE_OPTION = "@tam_sidebar"
 REFRESH_SECONDS = 2
 
 # Agent status, set by tam run (running, exited, stopped) and by agent hooks
-# (working, waiting). Order is urgency: the most urgent pane decides a window's status.
+# (working, waiting, idle; see setup.CLAUDE_HOOKS). Order is urgency: the most
+# urgent pane decides a window's status. waiting means the agent cannot go on
+# without you, and its card stands out.
+WAITING = "\033[1;33m"
 STATUS = {
-    "waiting": ("\033[33m○\033[0m", "waiting"),
+    "waiting": (f"{WAITING}◆\033[0m", "waiting for you"),
     "working": ("\033[32m●\033[0m", "working"),
     "running": ("\033[32m●\033[0m", "running"),
+    "idle": ("\033[2m○\033[0m", "idle"),
     "exited": ("\033[2m◌\033[0m", "exited"),
     "stopped": ("\033[2m◌\033[0m", "stopped"),
 }
@@ -292,11 +296,17 @@ def card(
     if b:
         meta.append(b)
     edge = f"{ACCENT}┃{RESET}" if active else " "
+    waiting = w["agent_pane"] and label == STATUS["waiting"][1]
     name_style = f"{BOLD}{ACCENT}" if active else BOLD
+    meta_text = _fit(" · ".join(meta))
+    if waiting:  # the status in yellow, the rest dim
+        meta_line = f"{WAITING}{meta_text[: len(label)]}{RESET}{DIM}{meta_text[len(label) :]}"
+    else:
+        meta_line = f"{DIM}{meta_text}"
     out = (
         f"{edge}{mark} {name_style}{_fit(name)}{RESET}\n"
         f"{edge}  {_fit(what)}\n"
-        f"{edge}  {DIM}{_fit(' · '.join(meta))}{RESET}"
+        f"{edge}  {meta_line}{RESET}"
     )
     return f"{out}\n{edge}  {links_line}" if links_line else out
 
@@ -402,9 +412,11 @@ def header(rows: list[dict[str, str]]) -> str:
     """Windows in total, agents working, agents waiting for you, and the keys."""
     windows = [w for ws in _windows(rows).values() for w in ws.values()]
     statuses = [window_status(w["statuses"]) for w in windows if w["agent_pane"]]
+    waiting = statuses.count("waiting")
+    waiting_text = f"{WAITING}{waiting} waiting{RESET}" if waiting else "0 waiting"
     return (
         f"{len(windows)} total · {statuses.count('working')} working · "
-        f"{statuses.count('waiting')} waiting\n"
+        f"{waiting_text}\n"
         f"{DIM}Ctrl+r rename · Ctrl+x close{RESET}"
     )
 

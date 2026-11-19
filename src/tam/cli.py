@@ -182,9 +182,11 @@ def cmd_hook(a: argparse.Namespace) -> int:
 
     if a.kind == "claude":
         return hook.claude()
+    if a.kind == "claude-stop":
+        return hook.claude_stop()
     if a.kind == "session" and a.id:
         return hook.session(a.id)
-    print("usage: tam hook claude | tam hook session <id>", file=sys.stderr)
+    print("usage: tam hook claude | claude-stop | session <id>", file=sys.stderr)
     return 2
 
 

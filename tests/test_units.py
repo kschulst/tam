@@ -187,15 +187,80 @@ def test_claude_hooks_all_events_idempotent_and_upgrade_old_install(tmp_path):
     from tam.setup import CLAUDE_HOOKS
 
     settings = tmp_path / "settings.json"
-    # An install from an older tam version: only SessionStart.
+    # An install from an older tam version: Notification set "waiting", which
+    # tam no longer uses; a user's own Notification hook stays.
     old = "command -v tam >/dev/null 2>&1 && tam hook claude || true"
-    settings.write_text(json.dumps({"hooks": {"SessionStart": [{"hooks": [{"command": old}]}]}}))
+    waiting = '[ -n "$TMUX_PANE" ] && tmux set -p -t "$TMUX_PANE" @tam_status waiting'
+    mine = {"hooks": [{"type": "command", "command": "say hi"}]}
+    settings.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "SessionStart": [{"hooks": [{"command": old}]}],
+                    "Notification": [mine, {"hooks": [{"command": waiting}]}],
+                }
+            }
+        )
+    )
     assert install_claude_hook(settings) is True
     assert install_claude_hook(settings) is False
     hooks = json.loads(settings.read_text())["hooks"]
-    for event, command in CLAUDE_HOOKS.items():
-        commands = [h["command"] for g in hooks[event] for h in g["hooks"]]
-        assert commands == [command], event
+    assert hooks["Notification"] == [mine]
+    for event, matcher, command in CLAUDE_HOOKS:
+        tam_groups = [(g.get("matcher"), h["command"]) for g in hooks[event] for h in g["hooks"]]
+        assert (matcher, command) in tam_groups, event
+    assert hooks["PreToolUse"] == [
+        {
+            "matcher": "AskUserQuestion|ExitPlanMode",
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": '[ -n "$TMUX_PANE" ] && tmux set -p -t "$TMUX_PANE" @tam_status'
+                    " waiting 2>/dev/null || true",
+                }
+            ],
+        }
+    ]
+
+
+def test_a_turn_that_ends_with_a_question_waits_for_you():
+    from tam.hook import asks_you
+
+    assert asks_you("Done.\n\nShould I commit and push?")
+    assert asks_you("Two options.\n\n**Which one do you want?**  \n")
+    assert not asks_you("What changed?\n\nTests pass.")  # the question is not last
+    assert not asks_you("")
+
+
+def test_waiting_cards_stand_out_and_idle_ones_do_not():
+    from tam.sidebar import WAITING, card, header
+
+    def window(status):
+        pane = {"@tam_harness": "claude", "pane_title": "✳ Fix login", "pane_current_path": "/x"}
+        return {
+            "name": "x:claude",
+            "agent_pane": pane,
+            "pane": pane,
+            "statuses": [status],
+            "panes": 1,
+        }
+
+    waiting = card(window("waiting"), 0, {})
+    name, _, meta = waiting.splitlines()
+    assert f"{WAITING}◆" in name and f"{WAITING}Fix login" not in name
+    assert f"{WAITING}waiting for you" in meta
+    idle = card(window("idle"), 0, {})
+    assert WAITING not in idle and "idle" in idle.splitlines()[2]
+    rows = [
+        {
+            "session_name": "s",
+            "window_index": "1",
+            "window_name": "a",
+            "@tam_harness": "claude",
+            "@tam_status": "waiting",
+        },
+    ]
+    assert f"{WAITING}1 waiting" in header(rows)
 
 
 def test_sidebar_lines():
