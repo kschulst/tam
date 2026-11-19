@@ -1048,23 +1048,45 @@ def test_tmux_init_restarts_sidebars_started_by_an_older_tam(env, monkeypatch): 
     assert _panes("=s1:0")[0] == (str(sidebar.WIDTH), True)
 
 
-def test_sidebar_tick_reloads_only_after_a_change(env, monkeypatch):  # noqa: F811
-    from tam import sidebar
+def _refreshes_done() -> None:
+    """Wait until no `tam sidebar --refresh` from a tmux hook runs."""
+    wait_for(lambda: subprocess.run(["pgrep", "-f", f"{TAM} sidebar --refresh"]).returncode != 0)
+    time.sleep(0.2)  # fzf applies the last reload
 
-    tmux("new-session", "-d", "-s", "s1", "-n", "one")
-    pane = tmux("list-panes", "-t", "=s1:0", "-F", "#{pane_id}").strip()
-    monkeypatch.setenv("TMUX_PANE", pane)
-    monkeypatch.setenv("TAM_SIDEBAR_PANE", "1")
-    monkeypatch.setattr(sidebar, "foreground_commands", lambda: {})
-    first = sidebar.tick()
-    assert first.startswith("reload-sync(cat ") and "transform-header(cat " in first
-    list_file, _ = sidebar._tick_files(pane)
+
+def test_every_sidebar_gets_the_new_list_also_where_nobody_looks(env, monkeypatch):  # noqa: F811
+    from tam import config, paths, sidebar
+
+    monkeypatch.setattr(paths, "tam_executable", lambda: TAM)
+    config.set("sidebar", "shown")
+    tmux("new-session", "-d", "-s", "s1", "-x", "160", "-y", "40", "-n", "one")
+    tmux("new-window", "-d", "-t", "s1:", "-n", "two")
+    subprocess.run([TAM, "tmux-init"], check=True)
+    wait_for(lambda: len(_panes("=s1:1")) == 2)
+    side = tmux("list-panes", "-t", "=s1:0", "-F", "#{pane_id}").split()[0]
+
+    def shows(name: str) -> bool:
+        return name in tmux("capture-pane", "-p", "-t", side)
+
+    wait_for(lambda: shows("two"))
+    # No client is attached, so no sidebar is visible and none ticks: the hooks
+    # and close() refresh them.
+    tmux("new-window", "-d", "-t", "s1:", "-n", "three")
+    wait_for(lambda: shows("three"), timeout=3)
+    subprocess.run([TAM, "sidebar", "--close", "=s1:1"], check=True)
+    wait_for(lambda: not shows("two"), timeout=3)
+
+    list_file, _ = sidebar._tick_files(side)
     window = tmux("display-message", "-p", "-t", "=s1:0", "#{window_id}").strip()
     assert f"\0{window}\t" in list_file.read_text()  # cards name windows by id
-    assert sidebar.tick() == ""  # nothing changed: no reload, nothing blocks fzf
-    tmux("rename-window", "-t", "=s1:0", "renamed")
-    assert sidebar.tick().startswith("reload-sync(")
-    assert "renamed" in list_file.read_text()
+    _refreshes_done()  # those the hooks started would change the lists
+    sent = []
+    monkeypatch.setattr(sidebar, "_post", lambda sock, actions: sent.append(actions) or True)
+    monkeypatch.setattr(sidebar, "foreground_commands", lambda: {})
+    sidebar.refresh()
+    sent.clear()
+    sidebar.refresh()
+    assert sent == []  # unchanged lists are not sent again
     args = " ".join(sidebar.fzf_args("tam", 0, ""))
     assert "bg-transform:" in args and "focus:bg-transform-footer:" in args
 
@@ -1084,8 +1106,9 @@ def test_sidebar_marks_its_own_window_after_a_switch(env, monkeypatch):  # noqa:
         return " ".join(ln for ln in shot if ln.startswith("▌"))
 
     wait_for(lambda: "two" in marked())
+    _refreshes_done()  # a reload arriving with the key would put the cursor back
     tmux("send-keys", "-t", side, "Up")  # the cursor moves to window one's card
-    wait_for(lambda: "one" in marked())
+    wait_for(lambda: "one" in marked(), show=side)
     tmux("select-window", "-t", "=s1:0")
     tmux("select-window", "-t", "=s1:1")
     wait_for(lambda: "two" in marked(), show=side)

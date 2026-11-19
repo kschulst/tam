@@ -54,6 +54,21 @@ SIDEBAR_CLOSE_HOOKS = ["pane-exited", "after-kill-pane"]
 # window's own card (`tam sidebar --refocus`).
 REFOCUS_HOOK_INDEX = 44
 REFOCUS_HOOKS = ["session-window-changed", "client-session-changed"]
+# Events that change what the sidebars list: `tam sidebar --refresh` sends every
+# sidebar the new list, so a window you switch to already shows it.
+REFRESH_HOOK_INDEX = 45
+REFRESH_HOOKS = [
+    "after-new-window",
+    "after-split-window",
+    "after-kill-pane",
+    "pane-exited",
+    "window-renamed",
+    "window-linked",
+    "window-unlinked",
+    "session-created",
+    "session-renamed",
+    "session-closed",
+]
 
 # Settings Claude Code needs for keys, notifications and clipboard.
 CLAUDE_SETTINGS = [
@@ -308,6 +323,13 @@ def tmux_init() -> int:
             "-g",
             f"{hook}[{SIDEBAR_HOOK_INDEX}]",
             f"if-shell -F '{when}' \"run-shell -b '{delay}{exe} sidebar --ensure'\"",
+        )
+    for hook in REFRESH_HOOKS:
+        tmux(
+            "set-hook",
+            "-g",
+            f"{hook}[{REFRESH_HOOK_INDEX}]",
+            f"if-shell -F '{when}' \"run-shell -b '{exe} sidebar --refresh'\"",
         )
     for hook in REFOCUS_HOOKS:
         tmux(

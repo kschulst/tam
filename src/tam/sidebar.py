@@ -642,8 +642,17 @@ def click(client: str, target: str, exe: str) -> str:
 
 
 def close(client: str, target: str) -> None:
+    """Close a window or session (`=name:`).
+
+    The other sidebars get the list without it first, so the window tmux moves
+    the client to does not show it. A sidebar closing it from its own fzf
+    (Ctrl+x) reloads itself afterwards.
+    """
     from tam import state
 
+    if shown():
+        own = os.environ.get("TMUX_PANE", "") if pane_mode() else ""
+        refresh(skip=target, besides=own)
     session = target[1:].split(":", 1)[0]
     if target.endswith(":"):
         if _current(client)[0] == session:
@@ -770,29 +779,85 @@ def _tick_files(pane: str) -> tuple[Path, Path]:
 
 
 def tick() -> str:
-    """fzf actions for the refresh tick: a reload only when the list or header changed.
+    """The visible sidebar's refresh tick: refresh every sidebar (see refresh).
 
-    Runs as fzf's bg-transform, so building the list does not block the sidebar.
-    The reload itself reads the list from a file and takes a few milliseconds.
+    Runs as fzf's bg-transform, so building the lists does not block the sidebar.
+    The tick covers what no tmux hook reports: agent status, titles, time since
+    activity, links.
     """
+    refresh()
+    return ""
+
+
+def _skipped(rows: list[dict[str, str]], skip: str) -> list[dict[str, str]]:
+    """rows without the window or session (`=name:`) skip names, which is about to close."""
+    if not skip:
+        return rows
+    if skip.endswith(":"):
+        session = skip.removeprefix("=")[:-1]
+        return [r for r in rows if r["session_name"] != session]
+    window = tmux("display-message", "-p", "-t", skip, "#{window_id}", check=False).strip()
+    return [r for r in rows if r["window_id"] != window]
+
+
+def refresh(skip: str = "", besides: str = "") -> None:
+    """Give every sidebar the current list, also those in windows nobody looks at.
+
+    The data is gathered once; each sidebar gets its own rendering, with its own
+    window as the current one, and a reload over its socket only when that
+    changed. A window you switch to then already shows the current list.
+
+    Runs from tmux hooks and from the tick, often several at once: one refresh
+    runs at a time, and requests meanwhile make it run once more. skip leaves out
+    a window or session that is being closed (see close). besides is a sidebar
+    pane that is sent nothing: one whose fzf is waiting for this process.
+    """
+    import fcntl
+
+    lock = paths.state_dir() / "sidebar-refresh.lock"
+    again = lock.with_suffix(".again")
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    while True:
+        with open(lock, "w") as lf:
+            try:
+                fcntl.flock(lf, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                again.touch()  # the running refresh goes once more
+                return
+            again.unlink(missing_ok=True)
+            _refresh_once(skip, besides)
+            skip = besides = ""
+        if not again.exists():
+            return
+
+
+def _refresh_once(skip: str, besides: str) -> None:
     import shlex
 
-    rows = pane_rows()
-    items, _ = lines(rows, _current(""))
-    text, head = "\0".join(items), header(rows)
-    list_file, header_file = _tick_files(os.environ["TMUX_PANE"])
-    try:
-        if list_file.read_text() == text and header_file.read_text() == head:
-            return ""
-    except OSError:
-        pass
-    list_file.parent.mkdir(parents=True, exist_ok=True)
-    for f, content in ((list_file, text), (header_file, head)):
-        tmp = f.with_name(f"{f.name}.{os.getpid()}")
-        tmp.write_text(content)
-        os.replace(tmp, f)
-    lf, hf = shlex.quote(str(list_file)), shlex.quote(str(header_file))
-    return f"reload-sync(cat {lf})+transform-header(cat {hf})"
+    rows = _skipped(pane_rows(), skip)
+    commands = foreground_commands()
+    head = header(rows)
+    where = {r["window_id"]: (r["session_name"], r["window_index"]) for r in rows}
+    for r in rows:
+        if not is_sidebar(r["pane_start_command"]) or r["pane_id"] == besides:
+            continue
+        pane = r["pane_id"]
+        items, _ = lines(rows, where[r["window_id"]], commands=commands)
+        text = "\0".join(items)
+        list_file, header_file = _tick_files(pane)
+        try:
+            if list_file.read_text() == text and header_file.read_text() == head:
+                continue
+        except OSError:
+            pass
+        list_file.parent.mkdir(parents=True, exist_ok=True)
+        for f, content in ((list_file, text), (header_file, head)):
+            tmp = f.with_name(f"{f.name}.{os.getpid()}")
+            tmp.write_text(content)
+            os.replace(tmp, f)
+        lf, hf = shlex.quote(str(list_file)), shlex.quote(str(header_file))
+        if not _post(socket_path(pane), f"reload-sync(cat {lf})+transform-header(cat {hf})"):
+            list_file.unlink(missing_ok=True)  # not delivered: the next refresh sends it
 
 
 def socket_path(pane: str) -> str:
@@ -817,9 +882,12 @@ def refocus(window: str) -> None:
     _post(socket_path(sidebars[0]["pane_id"]), f"clear-query+pos({selected + 1})")
 
 
-def _post(sock: str, actions: str) -> None:
-    """Send fzf actions to an fzf listening on the unix socket sock (--listen)."""
-    _request(sock, "POST", actions)
+def _post(sock: str, actions: str) -> bool:
+    """Send fzf actions to an fzf listening on the unix socket sock (--listen).
+
+    False when nothing listens there.
+    """
+    return _request(sock, "POST", actions) is not None
 
 
 def marked(pane: str) -> str:
@@ -833,8 +901,8 @@ def marked(pane: str) -> str:
         return ""
 
 
-def _request(sock: str, method: str, body: str) -> str:
-    """One HTTP request to fzf's --listen unix socket. "" when nothing listens there."""
+def _request(sock: str, method: str, body: str) -> str | None:
+    """One HTTP request to fzf's --listen unix socket. None when nothing listens there."""
     import http.client
     import socket
 
@@ -850,7 +918,7 @@ def _request(sock: str, method: str, body: str) -> str:
         conn.request(method, path, body=body.encode() if body else None)
         return conn.getresponse().read().decode()
     except OSError:
-        return ""  # the sidebar has not started listening yet, or has just closed
+        return None  # the sidebar has not started listening yet, or has just closed
     finally:
         conn.close()
 

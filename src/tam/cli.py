@@ -244,6 +244,9 @@ def cmd_sidebar(a: argparse.Namespace) -> int:
     if a.tick:
         print(sidebar.tick())
         return 0
+    if a.refresh:
+        sidebar.refresh()
+        return 0
     if a.mouse:
         pane, word, line = a.mouse
         sidebar.mouse(pane, word.removeprefix("w"), line.removeprefix("l"))
@@ -402,6 +405,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--ensure", action="store_true", help=argparse.SUPPRESS)
     s.add_argument("--refocus", help=argparse.SUPPRESS)
     s.add_argument("--tick", action="store_true", help=argparse.SUPPRESS)
+    s.add_argument("--refresh", action="store_true", help=argparse.SUPPRESS)
     s.add_argument("--mouse", nargs=3, help=argparse.SUPPRESS)
     s.add_argument("--close-marked", action="store_true", help=argparse.SUPPRESS)
     s.add_argument("--close", help=argparse.SUPPRESS)
