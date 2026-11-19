@@ -4,6 +4,8 @@
 # resume: command to continue the session. {id} is the session id reported
 #         by the agent's hook. Without {id} the command runs as written once
 #         the pane has started the agent before. Without resume, start is used.
+# resume_id: command that resumes one exact session ({id}), used instead of
+#         resume when tam knows the id (tam reopen picks a session by id).
 #
 # An agent counts as installed when the first word of `start` is on PATH.
 # Resume commands without {id} continue the most recent session in the pane's
@@ -16,6 +18,7 @@ resume = "claude --resume {id}"
 [harness.codex]
 start = "codex"
 resume = "codex resume --last"
+resume_id = "codex resume {id}"
 
 [harness.gemini]
 start = "gemini"

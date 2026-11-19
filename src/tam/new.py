@@ -42,10 +42,14 @@ def run_command(
     name: str,
     args: list[str],
     session_id: str | None = None,
+    started: bool = False,
 ) -> list[str]:
+    """started (implied by session_id): resume instead of starting a new session."""
     cmd = [tam_exe, "run", "--harness", harness, "--name", name]
     if session_id:
-        cmd += ["--session-id", session_id, "--started"]
+        cmd += ["--session-id", session_id]
+    if session_id or started:
+        cmd.append("--started")
     return cmd + ["--", *args]
 
 
@@ -61,10 +65,12 @@ def new(
     session_id: str | None = None,
     attach: bool = True,
     select: bool = True,
+    started: bool = False,
 ) -> str:
     """Create the agent window or split. Returns the tmux session it was created in.
 
-    select=False leaves the client where it is (for tam mcp).
+    select=False leaves the client where it is (for tam mcp). started resumes the
+    agent's latest session in cwd when there is no session_id (tam reopen).
     """
     stay = [] if select else ["-d"]
     if harness not in harness_mod.load():
@@ -84,7 +90,7 @@ def new(
         if not server_running() or session not in session_names():
             # A new session gets the agent as its first window, not an empty shell.
             name = name or harness
-            command = run_command(tam_exe, harness, name, args, session_id)
+            command = run_command(tam_exe, harness, name, args, session_id, started)
             tmux(
                 "new-session",
                 "-d",
@@ -110,7 +116,7 @@ def new(
             target or f"={session}:",
             "-c",
             cwd,
-            *run_command(tam_exe, harness, name, args, session_id),
+            *run_command(tam_exe, harness, name, args, session_id, started),
         )
     else:
         name = name or _unique_name(session, project, harness)
@@ -123,7 +129,7 @@ def new(
             cwd,
             "-n",
             f"{project}:{name}",
-            *run_command(tam_exe, harness, name, args, session_id),
+            *run_command(tam_exe, harness, name, args, session_id, started),
         )
 
     if attach_after:

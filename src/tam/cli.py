@@ -197,6 +197,12 @@ def cmd_adopt(a: argparse.Namespace) -> int:
     return adopt(paths.tam_executable())
 
 
+def cmd_reopen(a: argparse.Namespace) -> int:
+    from tam.history import pick
+
+    return pick(" ".join(a.words), content=a.content, agent=a.agent, dir=a.dir)
+
+
 def cmd_help(a: argparse.Namespace) -> int:
     from tam.cheatsheet import show
 
@@ -366,6 +372,19 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--finish", nargs=3, help=argparse.SUPPRESS)
     s.set_defaults(func=cmd_adopt)
 
+    s = sub.add_parser(
+        "reopen",
+        help="find an earlier agent session and open it again",
+        description="Pick an earlier session: windows closed in tam, and Claude and Codex"
+        " conversations. Words filter on the title and directory; --content also searches"
+        " the messages.",
+    )
+    s.add_argument("words", nargs="*", help="words the session must have")
+    s.add_argument("--content", action="store_true", help="also search the messages")
+    s.add_argument("--agent", default="", help="only this agent's sessions")
+    s.add_argument("--dir", default="", help="only sessions in or below this directory")
+    s.set_defaults(func=cmd_reopen)
+
     s = sub.add_parser("help", help="show the cheat sheet")
     s.add_argument("--print", dest="print_only", action="store_true", help=argparse.SUPPRESS)
     s.add_argument("--wait", action="store_true", help=argparse.SUPPRESS)
@@ -422,7 +441,8 @@ def main(argv: list[str] | None = None) -> int:
 
     s = sub.add_parser(
         "mcp",
-        help="MCP server that lets agents open, close, rename and type into tam's windows",
+        help="MCP server that lets agents open, close, rename and type into tam's windows,"
+        " and reopen earlier sessions",
         description="Without an action: run the MCP server on stdin/stdout (agents start it). "
         "install / uninstall: register it with every installed agent.",
     )

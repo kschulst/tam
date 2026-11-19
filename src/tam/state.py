@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import json
 import os
@@ -112,9 +113,26 @@ def write(state: dict) -> None:
             if _without_timestamp(old) == _without_timestamp(new_text):
                 return
             path.with_name("state.prev.json").write_text(old)
+            _record_closed(old, state)
         tmp = path.with_suffix(f".tmp{os.getpid()}")
         tmp.write_text(new_text)
         os.replace(tmp, path)
+
+
+def _record_closed(old_text: str, new: dict) -> None:
+    """Agent panes that left the state go to tam reopen's list (history.record_closed).
+
+    Saving runs only while tmux runs, so panes closed by a shutdown are not recorded.
+    """
+    from tam import history
+
+    try:
+        old = json.loads(old_text)
+    except ValueError:
+        return
+    # The list is a convenience; saving the state matters more.
+    with contextlib.suppress(OSError):
+        history.record_closed(old, new)
 
 
 def _without_timestamp(text: str) -> str:

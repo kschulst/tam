@@ -16,11 +16,16 @@ class Harness:
     name: str
     start: str
     resume: str | None = None
+    # Resumes one exact session ({id}). Used instead of resume when the id is known,
+    # for agents whose resume continues the latest session (codex resume --last).
+    resume_id: str | None = None
 
     def command(
         self, *, name: str, session_id: str, started: bool, args: list[str]
     ) -> tuple[list[str], bool]:
         """Return (argv, resuming)."""
+        if session_id and self.resume_id:
+            return _render(self.resume_id, name, session_id) + args, True
         if self.resume:
             needs_id = "{id}" in self.resume
             if (needs_id and session_id) or (not needs_id and started):
@@ -50,7 +55,12 @@ def load() -> dict[str, Harness]:
     for key, value in merged.items():
         if "start" not in value:
             continue
-        result[key] = Harness(name=key, start=value["start"], resume=value.get("resume"))
+        result[key] = Harness(
+            name=key,
+            start=value["start"],
+            resume=value.get("resume"),
+            resume_id=value.get("resume_id"),
+        )
     return result
 
 

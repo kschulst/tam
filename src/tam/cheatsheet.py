@@ -101,6 +101,7 @@ def text(closing_hint: bool = False, client: str | None = None) -> str:
         ("tam agent <name>", f"change the default agent (now {agent})"),
         ("tam adopt", "take over an agent running outside tmux"),
         ("! tam adopt", "same, typed inside that agent's session"),
+        ("tam reopen", "open a closed or earlier agent session again"),
         (_command_keys(), "run a tam command, e.g. mcp install (Up: history)"),
         ("tmux", None),
         (_option_or_tmux(p, "q", "d"), "quit tam (agents keep running; tam attaches again)"),

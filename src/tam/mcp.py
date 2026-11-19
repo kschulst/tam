@@ -2,7 +2,8 @@
 
 An agent starts `tam mcp` as a child process from inside its tmux pane, so the
 server talks to the same tmux server and knows the caller's pane ($TMUX_PANE).
-The tools use the same functions as the sidebar and the CLI. Closing the
+The tools use the same functions as the sidebar and the CLI; search_sessions and
+reopen are `tam reopen`'s (tam.history). Closing the
 caller's own window or session, or typing into its own pane, needs self=true.
 
 `tam mcp install` registers the server with every installed agent that has an
@@ -229,6 +230,29 @@ def send_text(window: str, text: str, enter: bool = True, self: bool = False) ->
     return {"sent": len(text), "pane": pane["pane_id"]}
 
 
+def search_sessions(
+    query: str = "",
+    dir: str = "",  # noqa: A002
+    agent: str = "",
+    content: bool = False,
+    limit: int = 20,
+) -> dict:
+    from tam import history
+
+    found = history.search(query, dir=dir, agent=agent, content=content, limit=max(1, limit))
+    return {"sessions": [s.as_dict() for s in found]}
+
+
+def reopen(id: str, split: str = "", window: str = "") -> dict:  # noqa: A002
+    from tam import history
+
+    target = _window(window)["id"] if window else os.environ.get("TMUX_PANE")
+    try:
+        return history.reopen(id, split=_split(split), target=target, select=False)
+    except history.ReopenError as e:
+        raise ToolError(str(e)) from e
+
+
 def _schema(props: dict, required: list[str] | None = None) -> dict:
     return {"type": "object", "properties": props, "required": required or []}
 
@@ -291,6 +315,36 @@ TOOLS: dict[str, tuple[Callable[..., dict], str, dict]] = {
         _schema(
             {"window": _WINDOW, "text": _STR, "enter": {"type": "boolean"}, "self": _SELF},
             ["window", "text"],
+        ),
+    ),
+    "search_sessions": (
+        search_sessions,
+        "Find earlier agent sessions, newest first: windows closed in tam, and Claude and "
+        "Codex conversations, also those started outside tam. Every word of query must be "
+        "in the title or directory, or with content=true in the messages (slower). A "
+        "session still open shows its window; one running outside tam shows its pid.",
+        _schema(
+            {
+                "query": _STR,
+                "dir": {"type": "string", "description": "Only sessions in or below it."},
+                "agent": {"type": "string", "description": "Only this agent (claude, codex, …)."},
+                "content": {"type": "boolean", "description": "Also search the messages."},
+                "limit": {"type": "integer", "description": "Most results (default 20)."},
+            }
+        ),
+    ),
+    "reopen": (
+        reopen,
+        "Open an earlier session (an id from search_sessions) in a new tam window, resuming "
+        "the same conversation, in the tmux session it was closed in or its project's. The "
+        "user's view does not move. A session already open is not opened twice.",
+        _schema(
+            {
+                "id": {"type": "string", "description": "id from search_sessions."},
+                "split": _SPLIT,
+                "window": {**_WINDOW, "description": "Window to split (with split)."},
+            },
+            ["id"],
         ),
     ),
 }

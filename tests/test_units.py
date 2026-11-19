@@ -694,6 +694,8 @@ def test_mcp_protocol_lists_the_tools():
         "rename",
         "switch_to",
         "send_text",
+        "search_sessions",
+        "reopen",
     }
 
 
@@ -1144,3 +1146,185 @@ def test_iterm_profile_follows_the_session(env):  # noqa: F811
     assert iterm_profile("api") == "Mine"
     tmux("set-environment", "-t", "api", "-r", "ITERM_PROFILE")  # client outside iTerm2
     assert iterm_profile("api") is None
+
+
+def _state(*panes: dict) -> dict:
+    """A saved state with one window per pane (session, cwd, agent fields)."""
+    sessions: dict[str, dict] = {}
+    for i, p in enumerate(panes):
+        s = sessions.setdefault(p["session"], {"name": p["session"], "windows": []})
+        agent = {"harness": p["agent"], "name": p["agent"], "args": [], "session_id": p["id"]}
+        s["windows"].append(
+            {"index": i, "name": f"x:{p['agent']}", "panes": [{"cwd": p["cwd"], "agent": agent}]}
+        )
+    return {"version": 1, "sessions": list(sessions.values())}
+
+
+def test_closed_agent_windows_are_recorded(tmp_path, monkeypatch):
+    from tam import history, state
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    a = {"session": "api", "agent": "claude", "id": "s1", "cwd": "/code/api"}
+    b = {"session": "api", "agent": "codex", "id": "", "cwd": "/code/api"}
+    state.write(_state(a, b))
+    state.write(_state(a, b))  # unchanged: nothing closed
+    assert not history.closed_file().exists()
+    state.write(_state({**a, "session": "web"}, b))  # moved to another session: still open
+    assert not history.closed_file().exists()
+
+    state.write(_state({**a, "id": "s2"}))  # /clear gave s2; the codex window closed
+    closed = [json.loads(line) for line in history.closed_file().read_text().splitlines()]
+    assert {(c["agent"], c["session_id"]) for c in closed} == {("claude", "s1"), ("codex", "")}
+    assert all(c["closed_at"] and c["cwd"] == "/code/api" for c in closed)
+
+
+def _claude_transcript(claude: Path, cwd: str, sid: str, *records: dict) -> Path:
+    d = claude / "projects" / re.sub(r"[^A-Za-z0-9]", "-", cwd)
+    d.mkdir(parents=True, exist_ok=True)
+    path = d / f"{sid}.jsonl"
+    path.write_text("".join(json.dumps({"cwd": cwd, **r}) + "\n" for r in records))
+    return path
+
+
+def _history_env(tmp_path, monkeypatch) -> tuple[Path, Path]:
+    from tam import history
+
+    claude, codex = tmp_path / "claude", tmp_path / "codex"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude))
+    monkeypatch.setenv("CODEX_HOME", str(codex))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setattr(history, "_live", lambda: ({}, {}))
+    return claude, codex
+
+
+def test_search_finds_claude_and_codex_sessions(tmp_path, monkeypatch):
+    from tam import history
+
+    claude, codex = _history_env(tmp_path, monkeypatch)
+    user = {"type": "user", "message": {"role": "user", "content": "fix the upload test"}}
+    answer = {
+        "type": "assistant",
+        "message": {"content": [{"type": "text", "text": "The retry loop never waits."}]},
+    }
+    _claude_transcript(
+        claude, "/code/api", "c1", user, answer, {"type": "ai-title", "aiTitle": "Upload test"}
+    )
+    _claude_transcript(
+        claude,
+        "/code/web",
+        "c2",
+        {"type": "user", "message": {"content": [{"type": "text", "text": "dark mode"}]}},
+        {"type": "ai-title", "aiTitle": "Dark mode"},
+        {"type": "custom-title", "customTitle": "Settings theme"},  # /rename wins
+    )
+    rollout = codex / "sessions" / "2026" / "11" / "19" / "rollout-x.jsonl"
+    rollout.parent.mkdir(parents=True)
+    rollout.write_text(
+        "".join(
+            json.dumps(r) + "\n"
+            for r in (
+                {"type": "session_meta", "payload": {"id": "x1", "cwd": "/code/api"}},
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "<environment_context>"}],
+                    },
+                },
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "rate limit the login"}],
+                    },
+                },
+            )
+        )
+    )
+
+    titles = {s.id: s.title for s in history.search()}
+    assert titles == {
+        "claude:c1": "Upload test",
+        "claude:c2": "Settings theme",
+        "codex:x1": "rate limit the login",
+    }
+    assert [s.id for s in history.search(dir="/code/api", agent="codex")] == ["codex:x1"]
+    assert history.search("retry") == []  # only in the messages
+    (hit,) = history.search("retry upload", content=True)
+    assert hit.id == "claude:c1" and "retry loop" in hit.snippet
+
+    # A window closed in tam adds where it was to the transcript's session.
+    history.closed_file().parent.mkdir(parents=True)
+    history.closed_file().write_text(
+        json.dumps(
+            {
+                "agent": "claude",
+                "session_id": "c1",
+                "cwd": "/code/api",
+                "name": "claude",
+                "session": "api",
+                "window": "api:claude",
+                "closed_at": 2_000_000_000,
+            }
+        )
+        + "\n"
+    )
+    first = history.search()[0]
+    assert first.id == "claude:c1" and first.tmux_session == "api" and first.title == "Upload test"
+    assert first.as_dict()["closed_in_tam"]
+
+
+def test_resume_id_resumes_one_exact_session():
+    h = Harness("codex", "codex", "codex resume --last", "codex resume {id}")
+    assert h.command(name="n", session_id="x1", started=True, args=[]) == (
+        ["codex", "resume", "x1"],
+        True,
+    )
+    assert h.command(name="n", session_id="", started=True, args=[]) == (
+        ["codex", "resume", "--last"],
+        True,
+    )
+    assert load()["codex"].resume_id == "codex resume {id}"
+
+
+def test_mcp_finds_and_reopens_a_closed_session(env, monkeypatch):  # noqa: F811
+    from tam import history
+
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(env / "claude"))
+    monkeypatch.setenv("CODEX_HOME", str(env / "codex"))
+    tmux("new-session", "-d", "-s", "w", "-n", "me", "-c", str(env / "a"))
+    tmux("new-session", "-d", "-s", "api", "-c", str(env / "a"))
+    me = tmux("list-panes", "-t", "=w:0", "-F", "#{pane_id}").strip()
+    history.closed_file().parent.mkdir(parents=True, exist_ok=True)
+    history.closed_file().write_text(
+        json.dumps(
+            {
+                "agent": "fake",
+                "session_id": "abc",
+                "cwd": str(env / "b"),
+                "name": "bot",
+                "session": "api",
+                "window": "b:bot",
+                "closed_at": int(time.time()),
+            }
+        )
+        + "\n"
+    )
+
+    found, error = _tool("search_sessions", pane=me, query="bot")
+    assert not error and [s["id"] for s in found["sessions"]] == ["fake:abc"]
+
+    opened, error = _tool("reopen", pane=me, id="fake:abc")
+    assert not error and opened["session"] == "api"  # the session it was closed in
+    window = tmux("list-windows", "-t", "=api", "-F", "#{window_id} #{window_name}")
+    assert "b:bot" in window
+    wid = [line.split()[0] for line in window.splitlines() if "b:bot" in line][0]
+    wait_for(lambda: "RESUMED abc" in tmux("capture-pane", "-p", "-t", wid))
+    assert tmux("display-message", "-p", "-t", "w:", "#{window_name}").strip() == "me"
+
+    again, error = _tool("reopen", pane=me, id="fake:abc")
+    assert not error and again == {"open_in_window": wid}  # not opened twice
+    message, error = _tool("reopen", pane=me, id="fake:nope")
+    assert error and "no session" in message
