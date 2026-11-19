@@ -822,18 +822,46 @@ def test_mcp_install_uses_each_agents_own_command(tmp_path, monkeypatch):
         calls.append(cmd)
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
+    claude_md = tmp_path / "claude" / "CLAUDE.md"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_md.parent))
     monkeypatch.setattr(mcp.shutil, "which", lambda name: name if name == "claude" else None)
     monkeypatch.setattr(mcp.subprocess, "run", run)
     monkeypatch.setattr(mcp.paths, "tam_executable", lambda: "/bin/tam")
-    assert mcp.install() == 0
+    assert mcp.install() == 0  # not a terminal: no question, no note
     # An earlier registration is removed first, then tam is added, only for claude.
     assert calls == [
         ["claude", "mcp", "remove", "--scope", "user", "tam"],
         ["claude", "mcp", "add", "--scope", "user", "tam", "--", "/bin/tam", "mcp"],
     ]
+    assert not claude_md.exists()
+    assert mcp.install(note=True) == 0  # tam mcp install --note
+    assert mcp.NOTE in claude_md.read_text()
     calls.clear()
     assert mcp.install(uninstall=True) == 0
     assert calls == [["claude", "mcp", "remove", "--scope", "user", "tam"]]
+    assert mcp.NOTE not in claude_md.read_text()
+
+
+def test_tams_note_keeps_the_rest_of_the_instruction_file(tmp_path):
+    from tam.mcp import NOTE, set_note
+
+    f = tmp_path / "AGENTS.md"
+    assert set_note(f, False) is False and not f.exists()  # nothing to remove
+    f.write_text("# Mine\n\nBe brief.\n")
+    assert set_note(f, True) is True
+    assert f.read_text().startswith("# Mine\n\nBe brief.\n\n<!-- tam mcp -->\n" + NOTE)
+    assert set_note(f, True) is False  # once
+    f.write_text(f.read_text() + "\nMore of mine.\n")
+    assert set_note(f, False) is True
+    assert f.read_text() == "# Mine\n\nBe brief.\n\nMore of mine.\n"
+
+
+def test_mcp_server_tells_agents_when_to_use_it():
+    (init,) = _mcp(
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "x"}}
+    )
+    text = init["result"]["instructions"]
+    assert "tam" in text and "search_sessions" in text and "send_text" in text
 
 
 def test_tmux_default_binding_is_replaced(env):  # noqa: F811

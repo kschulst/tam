@@ -18,10 +18,29 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Callable
+from pathlib import Path
 
 from tam import paths
 
 PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"]
+
+# Sent with initialize. Claude Code puts a server's instructions in the system
+# prompt, so the agent knows when the tools apply without being told.
+INSTRUCTIONS = """\
+The user runs coding agents in tam: tmux sessions and windows, one agent or \
+terminal per window, listed in a sidebar. Use these tools when the user talks \
+about windows, sessions, tabs, the sidebar, other agents, or an earlier or \
+closed conversation:
+- list_windows: what runs where, which agents are working or waiting, and their \
+issues and PRs.
+- new_agent / new_terminal: start an agent or a shell in a directory, in a new \
+window or a split.
+- send_text: tell or ask another agent something (it is typed into its pane).
+- search_sessions, then reopen: find an earlier conversation (by title, \
+directory, or with content=true what was said) and open it again.
+- rename, switch_to, close_window, close_session: tidy up. Closing stops the \
+agent in it; ask the user first unless they asked for it.
+"""
 
 
 class ToolError(Exception):
@@ -265,8 +284,9 @@ _SPLIT = {"type": "string", "enum": ["none", "right", "below"], "description": "
 TOOLS: dict[str, tuple[Callable[..., dict], str, dict]] = {
     "list_windows": (
         list_windows,
-        "List tam's sessions and windows: agent, status, topic, directory, branch, open "
-        "issue and PR links, whether a client shows it, and which one is yours (self).",
+        "List tam's sessions and windows (the user's tabs and agents): agent, status "
+        "(working, waiting for the user, idle), topic, directory, branch, open issue and PR "
+        "links, whether a client shows it, and which one is yours (self).",
         _schema({}),
     ),
     "new_agent": (
@@ -311,7 +331,8 @@ TOOLS: dict[str, tuple[Callable[..., dict], str, dict]] = {
     ),
     "send_text": (
         send_text,
-        "Type text into a window's agent (or its active pane), then Enter unless enter=false.",
+        "Tell or ask another agent something: type text into a window's agent (or its active "
+        "pane), then Enter unless enter=false.",
         _schema(
             {"window": _WINDOW, "text": _STR, "enter": {"type": "boolean"}, "self": _SELF},
             ["window", "text"],
@@ -319,8 +340,9 @@ TOOLS: dict[str, tuple[Callable[..., dict], str, dict]] = {
     ),
     "search_sessions": (
         search_sessions,
-        "Find earlier agent sessions, newest first: windows closed in tam, and Claude and "
-        "Codex conversations, also those started outside tam. Every word of query must be "
+        'Find an earlier or closed conversation, newest first ("the session about X from '
+        'last week"): windows closed in tam, and Claude and Codex conversations, also those '
+        "started outside tam. Every word of query must be "
         "in the title or directory, or with content=true in the messages (slower). A "
         "session still open shows its window; one running outside tam shows its pid.",
         _schema(
@@ -367,6 +389,7 @@ def handle(message: dict) -> dict | None:
             "protocolVersion": version,
             "capabilities": {"tools": {}},
             "serverInfo": {"name": "tam", "version": tam_version()},
+            "instructions": INSTRUCTIONS,
         }
     elif method == "ping":
         result = {}
@@ -438,10 +461,67 @@ AGENT_COMMANDS = {
 }
 
 
-def install(uninstall: bool = False) -> int:
+# A note in each agent's own instruction file, so it uses tam's tools in every
+# session. Optional: the server's instructions say the same where an agent reads
+# them. Between these markers, so uninstall and a later install replace it.
+NOTE_START, NOTE_END = "<!-- tam mcp -->", "<!-- /tam mcp -->"
+NOTE = (
+    "You run inside tam (tmux). For windows, sessions, other agents, and earlier or "
+    "closed conversations, use the tools of the `tam` MCP server (list_windows, "
+    "new_agent, send_text, search_sessions, reopen, …) instead of tmux commands."
+)
+
+
+def note_files() -> dict[str, Path]:
+    """Each agent's user-wide instruction file."""
+    from tam.history import codex_dir
+
+    return {
+        "claude": paths.claude_dir() / "CLAUDE.md",
+        "codex": codex_dir() / "AGENTS.md",
+        "gemini": Path.home() / ".gemini" / "GEMINI.md",
+    }
+
+
+def set_note(path: Path, on: bool) -> bool:
+    """Add (on) or remove tam's note in an instruction file. True if the file changed."""
+    text = path.read_text() if path.exists() else ""
+    start, end = text.find(NOTE_START), text.find(NOTE_END)
+    if start == -1 or end < start:
+        if not on:
+            return False
+        base = text
+    else:
+        before, after = text[:start].rstrip("\n"), text[end + len(NOTE_END) :].lstrip("\n")
+        base = before + ("\n\n" if before and after else "") + after
+    base = base.rstrip("\n") + "\n" if base.strip() else ""
+    block = f"{NOTE_START}\n{NOTE}\n{NOTE_END}\n"
+    new = base + ("\n" if base else "") + block if on else base
+    if new == text:
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(new)
+    return True
+
+
+def _ask_note(files: list[Path]) -> bool:
+    if not sys.stdin.isatty():
+        return False
+    shown = ", ".join(str(f).replace(str(Path.home()), "~") for f in files)
+    answer = input(f"Also add a line to {shown} telling the agents to use tam's tools? [y/N] ")
+    return answer.strip().lower() in ("y", "yes", "j", "ja")
+
+
+def install(uninstall: bool = False, note: bool | None = None) -> int:
+    """Register tam's MCP server with every installed agent (or remove it).
+
+    note: also add tam's note to their instruction files; None asks (no when not
+    a terminal). uninstall always removes the note.
+    """
     server = [paths.tam_executable(), "mcp"]
     found = False
     failed = False
+    done: list[str] = []
     for agent, (add, remove) in AGENT_COMMANDS.items():
         if not shutil.which(add[0]):
             continue
@@ -454,6 +534,7 @@ def install(uninstall: bool = False) -> int:
             cmd = add + server
         proc = subprocess.run(cmd, capture_output=True, text=True)
         if proc.returncode == 0:
+            done.append(agent)
             print(f"✓ {agent}: {'removed' if uninstall else 'added'} tam's MCP server")
         else:
             failed = True
@@ -461,4 +542,12 @@ def install(uninstall: bool = False) -> int:
             print(f"✗ {agent}: {reason[-1] if reason else 'failed'}")
     if not found:
         print("tam: none of these agents is installed: " + ", ".join(AGENT_COMMANDS))
+    files = {a: f for a, f in note_files().items() if a in done}
+    if uninstall:
+        note = False
+    elif files and note is None:
+        note = _ask_note(list(files.values()))
+    for agent, f in files.items():
+        if set_note(f, bool(note)):
+            print(f"✓ {agent}: {'added' if note else 'removed'} tam's note in {f}")
     return 1 if failed else 0

@@ -166,7 +166,7 @@ def cmd_mcp(a: argparse.Namespace) -> int:
     from tam import mcp
 
     if a.action in ("install", "uninstall"):
-        return mcp.install(uninstall=a.action == "uninstall")
+        return mcp.install(uninstall=a.action == "uninstall", note=a.note)
     return mcp.serve()
 
 
@@ -449,6 +449,12 @@ def main(argv: list[str] | None = None) -> int:
         "install / uninstall: register it with every installed agent.",
     )
     s.add_argument("action", nargs="?", choices=["serve", "install", "uninstall"], default="serve")
+    s.add_argument(
+        "--note",
+        action=argparse.BooleanOptionalAction,
+        help="install: also add a line to each agent's instruction file (CLAUDE.md, AGENTS.md,"
+        " GEMINI.md) telling it to use tam's tools (default: ask)",
+    )
     s.set_defaults(func=cmd_mcp)
 
     s = sub.add_parser("prompt")  # ⌥ /: tmux's command prompt runs this in a popup
