@@ -88,7 +88,9 @@ Closed a window too early? `tam reopen`, or `⌥ /` and `reopen`, lists the agen
 tam mcp install
 ```
 
-or `⌥ /` and `mcp install`. `tam mcp uninstall` removes it again. Then you can ask an agent, for example, to start a Codex agent on the API in a split, to tell the agent in the web window that the API has changed, to close the windows that are done, or to find the conversation about the upload test from last week and open it again.
+or `⌥ /` and `mcp install`. `tam mcp uninstall` removes it again.
+
+The server tells the agent when its tools apply (windows, sessions, other agents, earlier conversations), so you do not have to name tam. Claude Code reads that in every session. `tam mcp install` also offers to add one line saying the same to each agent's own instruction file (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.gemini/GEMINI.md`), for agents that do not read a server's instructions; `--note` or `--no-note` answers without asking. Then you can ask an agent, for example, to start a Codex agent on the API in a split, to tell the agent in the web window that the API has changed, to close the windows that are done, or to find the conversation about the upload test from last week and open it again.
 
 | Tool | Does |
 |---|---|

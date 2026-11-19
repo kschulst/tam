@@ -219,7 +219,7 @@ En sesjon som er åpen i tam, åpnes ikke to ganger: resultatet peker på vindue
 | `tam reopen [ord …] [--content] [--agent a] [--dir d]` | Finn en tidligere sesjon og åpne den igjen |
 | `tam move [sesjon]` | Flytt gjeldende vindu til en annen sesjon |
 | `tam sidebar` | Flytt fokus til sidebaren, eller tilbake. `--toggle` viser eller skjuler den i alle vinduer. |
-| `tam mcp` | MCP-server over stdio, startet av agentene. Verktøyene er de samme som i README, inkludert `search_sessions` og `reopen`. `install` / `uninstall` registrerer den hos alle installerte agenter. |
+| `tam mcp` | MCP-server over stdio, startet av agentene. Verktøyene er de samme som i README, inkludert `search_sessions` og `reopen`. `install` / `uninstall` registrerer den hos alle installerte agenter. `install` spør om en kort merknad skal legges i agentenes egne instruksjonsfiler (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`), mellom `<!-- tam mcp -->`-markører; `--note` / `--no-note` svarer uten å spørre. Serveren sender også `instructions` i `initialize`, som Claude Code legger i systemprompten. |
 | `tam --version` | Versjonen. Fra en git-checkout: `<release>+dev.<commit>`, med `.dirty` når sporede filer er endret. |
 | `tam help` | Jukselapp med `tam`- og tmux-versjon: popup inne i tmux, ellers utskrift |
 | `tam setup` | Legg til `source`-linjen i `~/.tmux.conf`, installer Claude-hooken og sjekk avhengigheter |

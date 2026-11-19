@@ -99,6 +99,8 @@ Every word searched for must be in the title, directory or tam's names; `--conte
 
 `tam mcp install` runs each installed agent's own command (`claude mcp add --scope user`, `codex mcp add`, `gemini mcp add --scope user`) with the path of the tam that runs it, after removing an earlier registration.
 
+The `initialize` response has `instructions`: when to use the tools and which one for what. Claude Code puts a server's instructions in the system prompt. For agents that do not, `tam mcp install` asks whether to add a short note to each registered agent's user-wide instruction file (`CLAUDE.md` in `$CLAUDE_CONFIG_DIR` or `~/.claude`, `AGENTS.md` in `$CODEX_HOME` or `~/.codex`, `~/.gemini/GEMINI.md`). The note sits between `<!-- tam mcp -->` and `<!-- /tam mcp -->`, so a later install replaces it, and `tam mcp uninstall` removes it and leaves the rest of the file as it was.
+
 ## Command prompt
 
 `⌥ /` opens tmux's `command-prompt`. The text is put in `display-popup … "tam prompt %%%"` (`%%%` escapes quotes), so it runs as `tam <text>` in a popup, which has a terminal for interactive commands and waits for a key at the end. The prompt keeps its own history.
