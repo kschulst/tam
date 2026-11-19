@@ -31,7 +31,7 @@ An agent pane runs `tam run`, which starts the agent and stores on the pane:
 |---|---|
 | `@tam_harness` | The agent |
 | `@tam_session_id` | The agent's session id, set by its hook |
-| `@tam_status` | `running`, `working`, `waiting`, `exited` or `stopped` |
+| `@tam_status` | `running`, `working`, `waiting`, `idle`, `exited` or `stopped` |
 
 When the agent exits, `tam run` keeps the pane and waits: Enter resumes, `q` closes.
 
@@ -65,11 +65,15 @@ macOS sends SIGTERM to every process at shutdown, not only to tmux. `tam run` ig
 
 | Event | Effect |
 |---|---|
-| `SessionStart` | Records the session id on the pane (and for `tam adopt`) |
-| `UserPromptSubmit`, `PostToolUse` | Status `working` |
-| `Stop`, `Notification` | Status `waiting` |
+| `SessionStart` | Records the session id on the pane (and for `tam adopt`); status `idle` |
+| `UserPromptSubmit`, `PostToolUse`, `PostToolUseFailure`, `ElicitationResult` | Status `working` |
+| `PermissionRequest`, `Elicitation`, `PreToolUse` for `AskUserQuestion` and `ExitPlanMode` | Status `waiting`: Claude cannot go on without you |
+| `Stop` | Status `waiting` if the turn's last line ends with `?`, else `idle` |
+| `StopFailure` | Status `idle` |
 
-The status hooks are plain shell commands that set a tmux option, because `PostToolUse` runs on every tool call. Outside tmux they do nothing.
+`waiting` means Claude needs an answer from you: a permission, a question or a plan to approve. A finished turn is `idle`. After you allow a tool, no hook fires until the tool has run, so a long command you allowed shows `waiting` until it is done.
+
+The status hooks are plain shell commands that set a tmux option, because `PostToolUse` runs on every tool call. Only `Stop` runs tam (`tam hook claude-stop`, about 0.05 s per turn), to read the turn's last message. Outside tmux they do nothing. `tam setup` replaces the hooks of an earlier tam version, and leaves your own hooks alone.
 
 ## Adopting a session
 
@@ -79,9 +83,19 @@ The session id of a running Claude comes, in this order, from Claude Code's own 
 
 Typed inside Claude Code as `! tam adopt`, it moves that session: it reads `CLAUDE_CODE_SESSION_ID`, starts a helper outside Claude's process group, prints a message, and exits. The helper stops Claude, opens the window with `claude --resume`, and the next `tam` attaches to it.
 
+## Earlier sessions
+
+`tam reopen` and the MCP tools `search_sessions` and `reopen` list earlier agent sessions from three places, merged by agent and session id:
+
+- `~/.local/state/tam/closed.jsonl`: agent panes that left tam's saved state while tmux kept running, with the directory, tam's session and window name, and when. Saving runs only while tmux runs, so panes closed by a shutdown are not added. A window moved to another session is not closed. A Claude pane that gets a new session id (`/clear`) adds the earlier conversation.
+- Claude Code's transcripts in `~/.claude/projects/`, also for conversations started outside tam. The title is Claude's own (`/rename`, else its generated title).
+- Codex's transcripts in `$CODEX_HOME/sessions/` (default `~/.codex`).
+
+Every word searched for must be in the title, directory or tam's names; `--content` also searches the messages. Reopening starts the agent with the exact session (`claude --resume <id>`, `codex resume <id>`) in its directory, in the tmux session it was closed in or the project's. A session that is open in tam already is not opened twice. A Claude started by hand counts as open when its process runs on a tmux pane's tty, which Claude Code's `~/.claude/sessions/<pid>.json` tells. A Claude running outside tmux is left alone: `tam adopt` moves it.
+
 ## MCP server
 
-`tam mcp` is an MCP server on stdin and stdout (JSON-RPC, one message per line), written with the standard library. An agent starts it as a child process from its tmux pane, so it reaches the same tmux server and knows the caller's pane (`$TMUX_PANE`). Its tools use the same functions as the sidebar and the CLI: `list_windows`, `new_agent`, `new_terminal`, `close_window`, `close_session`, `rename`, `switch_to` and `send_text`. New windows are created with `-d`, so the user's view does not move. Closing the caller's own window or session, or typing into its own pane, needs `self=true`.
+`tam mcp` is an MCP server on stdin and stdout (JSON-RPC, one message per line), written with the standard library. An agent starts it as a child process from its tmux pane, so it reaches the same tmux server and knows the caller's pane (`$TMUX_PANE`). Its tools use the same functions as the sidebar and the CLI: `list_windows`, `new_agent`, `new_terminal`, `close_window`, `close_session`, `rename`, `switch_to`, `send_text`, `search_sessions` and `reopen`. New windows are created with `-d`, so the user's view does not move. Closing the caller's own window or session, or typing into its own pane, needs `self=true`.
 
 `tam mcp install` runs each installed agent's own command (`claude mcp add --scope user`, `codex mcp add`, `gemini mcp add --scope user`) with the path of the tam that runs it, after removing an earlier registration.
 
@@ -94,6 +108,7 @@ Typed inside Claude Code as `! tam adopt`, it moves that session: it reads `CLAU
 | Path | Contents |
 |---|---|
 | `~/.local/state/tam/state.json` | Saved tmux layout and agents |
+| `~/.local/state/tam/closed.jsonl` | Agent windows closed in tam, for `tam reopen` |
 | `~/.local/state/tam/seen/` | Claude sessions seen by the hook, for `tam adopt` |
 | `~/.config/tam/config.toml` | `default_agent`, `sidebar` |
 | `~/.config/tam/harnesses.toml` | Your own agents and overrides ([Agents](agents.md)) |

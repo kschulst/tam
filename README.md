@@ -55,7 +55,7 @@ Every key except `⌥ q` and `⌥ w` also works as `Ctrl+b` followed by the lett
 
 The sidebar is a column on the left of every window. It lists each session, with a card for each of its windows:
 
-- An agent's card is named after what the agent is working on (the title it sets, such as Claude's), with its status: `working`, or `waiting` for you. An agent you started by hand in a tam window gets an agent's card too.
+- An agent's card is named after what the agent is working on (the title it sets, such as Claude's), with its status: `working`, `idle` when its turn is done, or `waiting for you`, in yellow, when it cannot go on without you: a permission, a question, or a plan to approve. An agent you started by hand in a tam window gets an agent's card too.
 - A terminal's card shows the program running in it, or its directory.
 - Each card has the git branch, and a line with up to three open issues and pull requests, such as `Issue: #40  PR: #42`: the branch's own PR, those named in the agent's title, and those the agent has shown. Cmd+click opens one. This needs [gh](https://cli.github.com).
 - The window you are in has a coloured bar. One click on a card goes to that window. The arrow keys mark a card without going there; `Enter` goes to the marked one and `⌥ w` closes it.
@@ -70,12 +70,15 @@ The sidebar is a column on the left of every window. It lists each session, with
 | `tam new [agent]` | New agent in a new window or split |
 | `tam term` | New terminal |
 | `tam adopt` | Move an agent session from a plain terminal into tam |
+| `tam reopen [words]` | Find an earlier session and open it again (`--content` searches the messages too) |
 | `tam agent [name]` | List the installed agents, or set the default |
 | `tam move` | Move the current window to another session |
 | `tam mcp install` | Let your agents work with tam (see below) |
 | `tam setup` | Install the tmux config line and the agent hooks |
 
 Already have Claude running in a plain terminal? Type `! tam adopt` in it, and it moves into tam.
+
+Closed a window too early? `tam reopen`, or `⌥ /` and `reopen`, lists the agent windows closed in tam and your Claude and Codex conversations, newest first. Type to filter; `Enter` opens the conversation again in a new window, where it was. `tam reopen --content rate limit` also searches what was said.
 
 ## Agents that work with tam
 
@@ -85,7 +88,7 @@ Already have Claude running in a plain terminal? Type `! tam adopt` in it, and i
 tam mcp install
 ```
 
-or `⌥ /` and `mcp install`. `tam mcp uninstall` removes it again. Then you can ask an agent, for example, to start a Codex agent on the API in a split, to tell the agent in the web window that the API has changed, or to close the windows that are done.
+or `⌥ /` and `mcp install`. `tam mcp uninstall` removes it again. Then you can ask an agent, for example, to start a Codex agent on the API in a split, to tell the agent in the web window that the API has changed, to close the windows that are done, or to find the conversation about the upload test from last week and open it again.
 
 | Tool | Does |
 |---|---|
@@ -95,6 +98,8 @@ or `⌥ /` and `mcp install`. `tam mcp uninstall` removes it again. Then you can
 | `rename` | Rename a window or a session |
 | `switch_to` | Show a window to you |
 | `send_text` | Type text into another window's agent |
+| `search_sessions` | Earlier sessions: closed windows, and Claude and Codex conversations, also by what was said |
+| `reopen` | Open an earlier session again, in a new window |
 | `close_window`, `close_session` | Close a window or a session |
 
 New windows open in the background, so your view does not move. The agent asks you before each call, as for any tool. Closing its own window or session, or typing into its own pane, also needs `self`, so an agent does not do that by mistake.

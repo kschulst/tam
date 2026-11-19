@@ -7,7 +7,7 @@ tam starts and resumes agents from short command templates. An agent counts as i
 | Agent | Program | Resume |
 |---|---|---|
 | claude | `claude` | `claude --resume <id>`: the exact session, reported by a hook |
-| codex | `codex` | `codex resume --last` |
+| codex | `codex` | `codex resume --last`; `codex resume <id>` for a session `tam reopen` picks |
 | gemini | `gemini` | `gemini --resume latest` |
 | qwen | `qwen` | `qwen --continue` |
 | opencode | `opencode` | `opencode --continue` |
@@ -48,6 +48,7 @@ start = "claude --permission-mode acceptEdits -n {name}"
 |---|---|
 | `start` | Command for a new session. `{name}` is the pane's agent name. |
 | `resume` | Command to continue it. With `{id}`, the id comes from the agent's hook (see below). Without `{id}`, the command runs as written once the agent has started in that pane. Without `resume`, `start` is used again. |
+| `resume_id` | Optional. Resumes one exact session (`{id}`), used instead of `resume` when tam knows the id, for example after `tam reopen`. |
 
 Arguments after `--` in `tam new myagent -- --flag` are added to both commands.
 

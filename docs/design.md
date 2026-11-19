@@ -43,6 +43,7 @@ resume = "claude --resume {id}"
 [harness.codex]
 start  = "codex"
 resume = "codex resume --last"
+resume_id = "codex resume {id}"
 ```
 
 Panes uten agent er vanlige shell-panes og trenger ingen definisjon.
@@ -54,6 +55,7 @@ Standardagenten, som `⌥ a`, `prefix + A` og `tam new` uten agentnavn bruker, s
 - Inneholder `resume` `{id}`, hentes ID-en fra pane-optionen `@tam_session_id`. Den settes av agentens hook.
 - Uten `{id}` kjøres `resume` som den står. For Codex betyr det siste samtale i mappen, så to Codex-panes i samme mappe gjenopptar samme samtale. Det er en kjent begrensning.
 - Uten `resume` startes agenten på nytt med `start`.
+- `resume_id` gjenopptar én bestemt sesjon og brukes i stedet for `resume` når ID-en er kjent. Codex rapporterer ikke ID, men `tam reopen` finner den i Codex' transkript, og panen får den som `@tam_session_id`.
 - Agenter som har hooks, kan rapportere ID med `tam hook session <id>`.
 
 ## Tilstand
@@ -145,12 +147,15 @@ Pane-optionen `@tam_status` har en av disse verdiene:
 | Status | Satt av |
 |---|---|
 | `running` | `tam run` når agenten startes (agenter uten status-hooks blir stående her) |
-| `working` | Claude-hooks `UserPromptSubmit` og `PostToolUse` |
-| `waiting` | Claude-hooks `SessionStart`, `Stop` og `Notification` (venter på deg) |
+| `working` | Claude-hooks `UserPromptSubmit`, `PostToolUse`, `PostToolUseFailure` og `ElicitationResult` |
+| `waiting` | Claude kommer ikke videre uten deg: `PermissionRequest`, `Elicitation`, `PreToolUse` for `AskUserQuestion` og `ExitPlanMode`, og `Stop` når siste linje i turens siste melding ender med `?` |
+| `idle` | Turen er ferdig: `Stop` ellers, `StopFailure`, og `SessionStart` |
 | `exited` | `tam run` når agenten avslutter |
 | `stopped` | `tam run --wait` etter restore |
 
-Status-hookene er rene shell-kommandoer (`tmux set -p -t "$TMUX_PANE" @tam_status ...`) uten Python, fordi `PostToolUse` kjører ved hvert verktøykall. Statusen lagres ikke i `state.json`.
+Status-hookene er rene shell-kommandoer (`tmux set -p -t "$TMUX_PANE" @tam_status ...`) uten Python, fordi `PostToolUse` kjører ved hvert verktøykall. Unntaket er `Stop`, som kjører `tam hook claude-stop` én gang per tur og leser `last_assistant_message`. Spørsmålet i slutten av en tur finnes med en heuristikk: siste linje, uten markdown rundt, ender med `?`. `Notification` brukes ikke: `idle_prompt` kommer etter en ferdig tur og betyr ikke at Claude venter på et svar, og tillatelser dekkes av `PermissionRequest`. Etter at du har godkjent et verktøy, kommer ingen hook før verktøyet er ferdig (`PostToolUse`), så en lang kommando du har godkjent, står som `waiting` til den er ferdig. Statusen lagres ikke i `state.json`.
+
+På kortet har `waiting` gul, fet `◆` og «waiting for you» i gult. Toppteksten viser antallet ventende i gult når det er flere enn null. `idle` vises dempet med `○`.
 
 Sidebaren er en pane på 44 kolonner lengst til venstre i hvert vindu. Den kjører `tam sidebar --pane` (`fzf`) og gjenkjennes på startkommandoen. Den viser sesjoner og vinduer. Hvert vindu er et kort, og kortet peker på vinduet med vindus-ID-en (`@12`), som ikke endres når vinduer legges til eller flyttes:
 
@@ -190,6 +195,20 @@ Sesjons-ID for en Claude-prosess som kjører, hentes i denne rekkefølgen:
 
 Formatet på sesjonsfilen er ikke dokumentert. Filer som ikke kan leses, eller som mangler felt, hoppes over. Uten filene virker `tam adopt` som før.
 
+### Tidligere sesjoner (`tam reopen`)
+
+`tam reopen`, og MCP-verktøyene `search_sessions` og `reopen`, finner tidligere agentsesjoner og åpner dem igjen. Kildene slås sammen på agent og sesjons-ID:
+
+1. `~/.local/state/tam/closed.jsonl`. Når `state.write` lagrer en ny tilstand, legges agent-panes som fantes i forrige tilstand, men ikke i den nye, til her med agent, sesjons-ID, mappe, tam-navn, tmux-sesjon, vindusnavn og tidspunkt. Fila beholder de siste 500. Lagring skjer bare mens tmux kjører, så panes som lukkes av en shutdown, kommer ikke med. Et vindu som flyttes til en annen sesjon, beholder panen og regnes ikke som lukket. En Claude-pane som får ny sesjons-ID (`/clear`), regnes som lukket for den gamle samtalen.
+2. Claudes transkripter, `~/.claude/projects/<mappe>/<id>.jsonl`, også for samtaler startet utenfor tam. Tittelen er `custom-title` (`/rename`), ellers siste `ai-title`, ellers første melding. Titlene leses fra de siste 256 kB av fila.
+3. Codex' transkripter, `$CODEX_HOME/sessions/**/rollout-*.jsonl` (`session_meta` gir ID og mappe). Tittelen er første melding.
+
+Søket krever at hvert ord står i tittel, mappe, tam-navn eller agent. Med `--content` (MCP: `content=true`) søkes det også i meldingene. Linjer som ikke inneholder noen av ordene, parses ikke. Ingen av transkriptformatene er dokumentert, så linjer tam ikke kan lese, hoppes over.
+
+En sesjon som er åpen i tam, åpnes ikke to ganger: resultatet peker på vinduet. Åpen betyr at en pane har ID-en som `@tam_session_id`, eller at en Claude-prosess med ID-en i `~/.claude/sessions/<pid>.json` kjører på en tty som tilhører en tmux-pane. En Claude som kjører utenfor tmux, åpnes ikke, og feilmeldingen peker på `tam adopt`.
+
+`reopen` lager et nytt vindu med `tam run --session-id <id> --started` i sesjonens mappe, i tmux-sesjonen vinduet ble lukket i, ellers prosjektets sesjon, ellers gjeldende sesjon. Uten sesjons-ID (agenter uten hook og uten transkript) startes agentens `resume` i mappen, som fortsetter siste sesjon der. Fra MCP lages vinduet med `-d`. Fra `tam reopen` flytter klienten til vinduet.
+
 ## CLI
 
 | Kommando | Funksjon |
@@ -197,9 +216,10 @@ Formatet på sesjonsfilen er ikke dokumentert. Filer som ikke kan leses, eller s
 | `tam` | Restore ved behov, deretter attach |
 | `tam new [agent] [-n navn] [--split h\|v] [-- flagg]` | Ny agentpane |
 | `tam adopt` | Meld inn en ekstern eller avsluttet Claude-sesjon |
+| `tam reopen [ord …] [--content] [--agent a] [--dir d]` | Finn en tidligere sesjon og åpne den igjen |
 | `tam move [sesjon]` | Flytt gjeldende vindu til en annen sesjon |
 | `tam sidebar` | Flytt fokus til sidebaren, eller tilbake. `--toggle` viser eller skjuler den i alle vinduer. |
-| `tam mcp` | MCP-server over stdio, startet av agentene. `install` / `uninstall` registrerer den hos alle installerte agenter. |
+| `tam mcp` | MCP-server over stdio, startet av agentene. Verktøyene er de samme som i README, inkludert `search_sessions` og `reopen`. `install` / `uninstall` registrerer den hos alle installerte agenter. |
 | `tam --version` | Versjonen. Fra en git-checkout: `<release>+dev.<commit>`, med `.dirty` når sporede filer er endret. |
 | `tam help` | Jukselapp med `tam`- og tmux-versjon: popup inne i tmux, ellers utskrift |
 | `tam setup` | Legg til `source`-linjen i `~/.tmux.conf`, installer Claude-hooken og sjekk avhengigheter |

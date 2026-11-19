@@ -32,7 +32,7 @@
   <text x="480" y="32" text-anchor="middle" class="dim t">tam:api</text>
 
   <!-- sidebar pane (left) -->
-  <text x="37" y="70">4 total · 2 working · 1 waiting</text>
+  <text x="37" y="70">4 total · 1 working · <tspan class="y b">1 waiting</tspan></text>
   <text x="37" y="87" class="dim">Ctrl+r rename · Ctrl+x close</text>
   <text x="20" y="110" class="c">&gt;</text>
 
@@ -41,14 +41,14 @@
   <!-- the current window: coloured bar and name; also the marked card -->
   <rect x="17" y="154" width="372" height="68" rx="3" fill="#44475a" opacity="0.55"/>
   <text x="20" y="168" class="c">▌</text>
-  <text x="37" y="168" class="c">┃</text><text x="45" y="168" class="y">○</text><text x="62" y="168" class="c b">Fix flaky upload test</text>
+  <text x="37" y="168" class="c">┃</text><text x="45" y="168" class="y b">◆</text><text x="62" y="168" class="c b">Fix flaky upload test</text>
   <text x="37" y="185" class="c">┃</text><text x="62" y="185">claude · ~/code/api</text>
-  <text x="37" y="202" class="c">┃</text><text x="62" y="202" class="dim">waiting · 3m · fix-upload-retry</text>
+  <text x="37" y="202" class="c">┃</text><text x="62" y="202"><tspan class="y b">waiting for you</tspan><tspan class="dim"> · 3m · upload-retry</tspan></text>
   <text x="37" y="219" class="c">┃</text><text x="62" y="219">Issue: <tspan class="u">#40</tspan>  PR: <tspan class="u">#42</tspan></text>
 
-  <text x="45" y="253" class="g">●</text><text x="62" y="253" class="b">Rate limit the login endpoint</text>
+  <text x="45" y="253" class="dim">○</text><text x="62" y="253" class="b">Rate limit the login endpoint</text>
   <text x="62" y="270">codex · ~/code/api</text>
-  <text x="62" y="287" class="dim">working · now · login-rate-limit</text>
+  <text x="62" y="287" class="dim">idle · 8m · login-rate-limit</text>
   <text x="62" y="304">PR: <tspan class="u">#45</tspan></text>
 
   <text x="45" y="338" class="dim">›</text><text x="62" y="338" class="b">api</text>
@@ -85,6 +85,7 @@
   <text x="430" y="342" class="dim">  ⎿  12 passed in 0.84s</text>
   <text x="412" y="376" class="g">⏺</text>
   <text x="430" y="376">Opened PR #42: Wait between upload retries.</text>
+  <text x="430" y="396">Should I also add a test for the backoff?</text>
   <rect x="412" y="420" width="516" height="36" rx="6" fill="none" stroke="#44475a"/>
   <text x="426" y="443" class="dim">&gt;</text>
   <rect x="442" y="430" width="9" height="17" fill="#d8dee9" opacity="0.8"/>
