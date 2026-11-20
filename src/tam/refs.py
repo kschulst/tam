@@ -165,8 +165,8 @@ def _candidates(repo: str, repos: list[tuple[str, str]]) -> list[tuple[str, str]
     return [(owner, repo) for owner in owners]
 
 
-# Bytes read from the end of a Claude transcript.
-TRANSCRIPT_BYTES = 1024 * 1024
+# Links kept from a Claude transcript, newest first.
+TRANSCRIPT_LINKS = 50
 
 
 def claude_transcript(pane: str) -> Path | None:
@@ -207,30 +207,52 @@ def claude_transcript(pane: str) -> Path | None:
     return next((paths.claude_dir() / "projects").glob(f"*/{sid}.jsonl"), None)
 
 
-def _tail(path: Path, size: int) -> str:
+def _transcript_links(path: Path, seen: dict | None) -> tuple[list[tuple], dict]:
+    """Links in the transcript, newest first, and what to pass as seen next time.
+
+    seen holds how far the file was read and the links found so far, so only
+    what was added since is read. A link stays however long the session gets.
+    A new path, or a file shorter than before, is read from the start.
+    """
+    if not seen or seen.get("path") != str(path):
+        seen = {}
+    offset = int(seen.get("offset", 0))
+    known = [tuple(link) for link in seen.get("links", [])]
     try:
+        if path.stat().st_size < offset:
+            offset, known = 0, []
         with path.open("rb") as f:
-            f.seek(max(0, path.stat().st_size - size))
-            return f.read().decode(errors="ignore")
+            f.seek(offset)
+            added = f.read()
     except OSError:
-        return ""
+        return known, seen
+    end = added.rfind(b"\n") + 1  # a line still being written is read next time
+    found = links_in(added[:end].decode(errors="ignore"))
+    links = list(dict.fromkeys([*found, *known]))[:TRANSCRIPT_LINKS]
+    return links, {"path": str(path), "offset": offset + end, "links": [list(x) for x in links]}
 
 
 def refresh(pane: str) -> None:
     """Scan the pane's scrollback and title; write its open issues and PRs (in the background).
 
     Claude Code draws on the alternate screen, which has no scrollback, so for a
-    Claude pane the end of its transcript is read too: the links Claude wrote and
-    the PRs it opened (`pr-link`). The transcript counts as newer than the screen.
+    Claude pane its transcript is read too: the links Claude wrote and the PRs it
+    opened (`pr-link`). The transcript counts as newer than the screen.
     """
     from tam.tmux import tmux
 
     now = time.time()
     text = tmux("capture-pane", "-p", "-J", "-S", f"-{SCROLLBACK}", "-t", pane, check=False)
+    links = links_in(text)
     transcript = claude_transcript(pane)
+    seen: dict = {}
     if transcript:
-        text += "\n" + _tail(transcript, TRANSCRIPT_BYTES)
-    found = [(o, r, n) for o, r, _, n in links_in(text)]
+        previous = (_read(_pane_file(pane)) or {}).get("transcript")
+        from_transcript, seen = _transcript_links(
+            transcript, previous if isinstance(previous, dict) else None
+        )
+        links = list(dict.fromkeys([*from_transcript, *links]))
+    found = [(o, r, n) for o, r, _, n in links]
     title = tmux("display-message", "-p", "-t", pane, "#{pane_title}", check=False).strip()
     references = title_refs(title)
     if references:
@@ -254,5 +276,5 @@ def refresh(pane: str) -> None:
         # GitHub's owner and repo names ignore case: App-platform-k8s is app-platform-k8s.
         if all(r["url"].lower() != url.lower() for r in refs):
             refs.append({"url": url, "number": number, "kind": kind})
-    _write(_pane_file(pane), {"scanned": now, "refs": refs})
+    _write(_pane_file(pane), {"scanned": now, "refs": refs, "transcript": seen})
     _pane_file(pane).with_suffix(".pending").unlink(missing_ok=True)

@@ -516,6 +516,34 @@ def test_refs_of_a_claude_pane_come_from_its_transcript(env, monkeypatch):  # no
     assert [(r["kind"], r["number"]) for r in found] == [("pr", 8), ("issue", 7)]  # newest first
 
 
+def test_a_claude_card_keeps_links_from_early_in_a_long_session(env, monkeypatch):  # noqa: F811
+    from tam import refs
+
+    claude = env / "claude"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude))
+    project = claude / "projects" / "-x"
+    project.mkdir(parents=True)
+    transcript = project / "s1.jsonl"
+    transcript.write_text(json.dumps({"text": "see https://github.com/o/r/issues/7"}) + "\n")
+    pane = tmux("new-session", "-d", "-P", "-F", "#{pane_id}", "sleep 100").strip()
+    tmux("set-option", "-p", "-t", pane, "@tam_harness", "claude")
+    tmux("set-option", "-p", "-t", pane, "@tam_session_id", "s1")
+    monkeypatch.setattr(refs, "_state", lambda o, r, n, now: ("open", "issue"))
+    refs.refresh(pane)
+    # Megabytes of tool output later, and a line still being written.
+    with transcript.open("a") as f:
+        f.write(json.dumps({"text": "x" * 3_000_000}) + "\n")
+        f.write(json.dumps({"text": "and https://github.com/o/r/issues/9"}) + "\n")
+        f.write('{"text": "half a line https://github.com/o/r/issues/1')
+    refs.refresh(pane)
+    data = refs._read(refs._pane_file(pane))
+    assert [r["number"] for r in data["refs"]] == [9, 7]
+    with transcript.open("a") as f:
+        f.write('0"}\n')
+    refs.refresh(pane)
+    assert [r["number"] for r in refs._read(refs._pane_file(pane))["refs"]] == [10, 9, 7]
+
+
 def test_refs_from_the_agents_title(env, monkeypatch):  # noqa: F811
     from tam import refs
 
